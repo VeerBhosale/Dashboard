@@ -3,8 +3,9 @@ name: Update Breaker FVG Dashboard
 on:
   workflow_dispatch:
   schedule:
-    # Runs at 4:15 PM IST, after the regular NSE session.
-    - cron: "45 10 * * 1-5"
+    # Runs hourly during the regular NSE session.
+    # GitHub cron uses UTC: 04:45-09:45 UTC = 10:15 AM-3:15 PM IST.
+    - cron: "45 4-9 * * 1-5"
 
 permissions:
   contents: write
@@ -32,6 +33,12 @@ jobs:
 
       - name: Refresh dashboard data
         run: python breaker_fvg_dashboard_export.py --period-days 30 --interval 1h
+
+      - name: Run Telegram scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python breaker_fvg_scan.py
 
       - name: Commit refreshed data
         run: |
