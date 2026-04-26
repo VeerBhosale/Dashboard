@@ -96,8 +96,8 @@
       overflow: visible;
     }
 
-    .app.left-collapsed aside > :not(.panel-toggle),
-    .app.right-collapsed .details > :not(.panel-toggle) {
+    .app.left-collapsed aside > *,
+    .app.right-collapsed .details > * {
       display: none;
     }
 
@@ -295,7 +295,7 @@
     }
 
     .panel-toggle {
-      position: absolute;
+      position: fixed;
       top: 12px;
       z-index: 30;
       width: 28px;
@@ -309,14 +309,23 @@
       font-size: 17px;
       font-weight: 700;
       line-height: 1;
+      transition: left 160ms ease, right 160ms ease, background 120ms ease, border-color 120ms ease;
     }
 
     .panel-toggle.left {
-      right: -15px;
+      left: 286px;
     }
 
     .panel-toggle.right {
-      left: -15px;
+      right: 346px;
+    }
+
+    .app.left-collapsed .panel-toggle.left {
+      left: 10px;
+    }
+
+    .app.right-collapsed .panel-toggle.right {
+      right: 10px;
     }
 
     .app.left-collapsed .panel-toggle.left::before {
@@ -567,11 +576,6 @@
         visibility: visible;
       }
 
-      .app.left-collapsed aside > :not(.panel-toggle),
-      .app.right-collapsed .details > :not(.panel-toggle) {
-        display: flex;
-      }
-
       .chart-shell {
         height: 100dvh;
         grid-template-rows: auto minmax(0, 1fr);
@@ -617,6 +621,7 @@
       .panel-toggle {
         position: fixed;
         top: 14px;
+        z-index: 50;
         width: 30px;
         height: 42px;
         background: rgba(21, 27, 35, 0.96);
@@ -627,9 +632,17 @@
         right: auto;
       }
 
+      .app:not(.left-collapsed) .panel-toggle.left {
+        left: calc(min(88vw, 340px) - 15px);
+      }
+
       .panel-toggle.right {
         right: 10px;
         left: auto;
+      }
+
+      .app:not(.right-collapsed) .panel-toggle.right {
+        right: calc(min(88vw, 340px) - 15px);
       }
 
       #chart {
@@ -648,8 +661,9 @@
 </head>
 <body>
   <div class="app" id="app">
+    <button class="panel-toggle left" id="leftPanelBtn" title="Toggle watchlist" aria-label="Toggle watchlist"></button>
+    <button class="panel-toggle right" id="rightPanelBtn" title="Toggle details" aria-label="Toggle details"></button>
     <aside>
-      <button class="panel-toggle left" id="leftPanelBtn" title="Toggle watchlist" aria-label="Toggle watchlist"></button>
       <div class="topbar">
         <div>
           <h1>Breaker+FVG</h1>
@@ -678,7 +692,6 @@
     </main>
 
     <section class="details">
-      <button class="panel-toggle right" id="rightPanelBtn" title="Toggle details" aria-label="Toggle details"></button>
       <div class="topbar">
         <div>
           <h1>Signal Details</h1>
