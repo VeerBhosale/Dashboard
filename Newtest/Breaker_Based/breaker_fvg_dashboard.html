@@ -228,6 +228,13 @@
       min-width: 2px;
     }
 
+    .fvg-zone-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
     .rolling-pool-canvas {
       position: absolute;
       inset: 0;
@@ -420,7 +427,7 @@
 
     .meter-arc {
       position: relative;
-      height: 82px;
+      height: 96px;
       overflow: hidden;
       border-bottom: 1px solid #2b343f;
     }
@@ -428,7 +435,7 @@
     .meter-band {
       position: absolute;
       left: 50%;
-      bottom: -88px;
+      bottom: -80px;
       width: 176px;
       height: 176px;
       transform: translateX(-50%);
@@ -449,7 +456,7 @@
       left: 50%;
       bottom: 0;
       width: 3px;
-      height: 74px;
+      height: 84px;
       background: #e8eef4;
       border-radius: 999px;
       transform-origin: 50% 100%;
@@ -590,13 +597,23 @@
       }
 
       .chart-shell > .topbar {
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
         padding-right: 48px;
         padding-left: 48px;
       }
 
       h1 {
         font-size: 15px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .sub {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .toolbar {
@@ -605,6 +622,24 @@
         overflow-x: auto;
         padding-bottom: 2px;
         justify-content: center;
+      }
+
+      #lastSignalBtn {
+        font-size: 0;
+      }
+
+      #lastSignalBtn::after {
+        content: "Last";
+        font-size: 12px;
+      }
+
+      #rollingLevelsBtn {
+        font-size: 0;
+      }
+
+      #rollingLevelsBtn::after {
+        content: "ISL/ISH";
+        font-size: 12px;
       }
 
       button {
@@ -714,7 +749,47 @@
 
   <script>
     const data = window.BREAKER_FVG_DATA || { tickers: [] };
-    const tickers = [...data.tickers].sort((a, b) => b.signals.length - a.signals.length || a.ticker.localeCompare(b.ticker));
+    function sortClamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function sortNorm(value, low, high) {
+      if (value === null || value === undefined || Number.isNaN(value)) return 0;
+      return sortClamp((value - low) / (high - low), 0, 1);
+    }
+
+    function sortProbability(signal) {
+      if (!signal) return 0;
+      const m = signal.metrics || {};
+      const sharpness =
+        0.34 * sortNorm(signal.atr_ratio, 0.92, 1.45)
+        + 0.30 * sortNorm(signal.fvg_atr, 0.30, 1.02)
+        + 0.18 * sortNorm(signal.score, 0.58, 1.85);
+      const liquidity =
+        0.06 * sortNorm(m.protected_lows || 0, 0, 2)
+        + 0.04 * sortNorm(m.low_hold || 0, 0, 10)
+        + 0.04 * (m.bull_fvg_retest ? 1 : 0)
+        + 0.04 * (m.current_isl_swept || signal.isl_sweep ? 1 : 0);
+      const risk =
+        0.08 * (m.deeper_isl_pending && (m.deeper_isl_atr || 0) < 1.0 ? 1 : 0)
+        + 0.05 * (signal.atr_ratio !== null && signal.atr_ratio !== undefined && signal.atr_ratio < 0.92 ? 1 : 0)
+        + 0.05 * (signal.fvg_atr !== null && signal.fvg_atr !== undefined && signal.fvg_atr < 0.30 ? 1 : 0);
+      return sortClamp(0.22 + sharpness + liquidity - risk, 0.05, 0.92);
+    }
+
+    function latestSignal(item) {
+      return item.signals?.length ? item.signals[item.signals.length - 1] : null;
+    }
+
+    const tickers = [...data.tickers].sort((a, b) => {
+      const aSignal = latestSignal(a);
+      const bSignal = latestSignal(b);
+      const timeDiff = (bSignal?.time || 0) - (aSignal?.time || 0);
+      if (timeDiff) return timeDiff;
+      const probabilityDiff = sortProbability(bSignal) - sortProbability(aSignal);
+      if (probabilityDiff) return probabilityDiff;
+      return a.ticker.localeCompare(b.ticker);
+    });
     const state = {
       ticker: null,
       signal: null,
@@ -773,9 +848,27 @@
       return istDateTime.format(new Date(time * 1000));
     }
 
-    function formatIstTick(time) {
+    function istParts(time) {
       const ts = typeof time === 'object' ? Date.UTC(time.year, (time.month || 1) - 1, time.day || 1) / 1000 : time;
-      return istTickTime.format(new Date(ts * 1000));
+      const parts = istTickTime.formatToParts(new Date(ts * 1000));
+      return Object.fromEntries(parts.filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+    }
+
+    function formatIstTick(time, tickMarkType) {
+      const parts = istParts(time);
+      const type = String(tickMarkType || '').toLowerCase();
+      const day = String(Number(parts.day || 1));
+      const month = parts.month || '';
+      const clock = `${parts.hour || '00'}:${parts.minute || '00'}`;
+
+      if (type.includes('time')) return clock;
+      if (type.includes('month') || type.includes('year')) return month;
+      if (day === '1') return month;
+      return day;
+    }
+
+    function formatIstCrosshair(time) {
+      return istTickTime.format(new Date((typeof time === 'object' ? Date.UTC(time.year, (time.month || 1) - 1, time.day || 1) / 1000 : time) * 1000));
     }
 
     generatedAt.textContent = data.generated_at ? `Generated ${istDateTime.format(new Date(data.generated_at))}` : 'No data generated';
@@ -809,7 +902,7 @@
         tickMarkFormatter: formatIstTick,
       },
       localization: {
-        timeFormatter: formatIstTick,
+        timeFormatter: formatIstCrosshair,
       },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     });
@@ -1348,24 +1441,35 @@
       if (!startTime || !endTime || lower === null || upper === null || lower === undefined || upper === undefined) return;
       if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
       if (!priceFitsCurrentTicker(lower) || !priceFitsCurrentTicker(upper)) return;
-      const zone = document.createElement('div');
-      zone.className = 'fvg-zone';
+      const zone = document.createElement('canvas');
+      zone.className = 'fvg-zone-canvas';
       chartEl.appendChild(zone);
       state.fvgZones.push(zone);
 
       const update = () => {
+        const width = chartEl.clientWidth;
+        const height = chartEl.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        if (zone.width !== Math.floor(width * dpr) || zone.height !== Math.floor(height * dpr)) {
+          zone.width = Math.floor(width * dpr);
+          zone.height = Math.floor(height * dpr);
+          zone.style.width = `${width}px`;
+          zone.style.height = `${height}px`;
+        }
+
+        const ctx = zone.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
         const x1 = chart.timeScale().timeToCoordinate(startTime);
         const x2 = chart.timeScale().timeToCoordinate(endTime);
         const yUpper = candleSeries.priceToCoordinate(upper);
         const yLower = candleSeries.priceToCoordinate(lower);
 
         if ([x1, x2, yUpper, yLower].some(v => v === null || v === undefined)) {
-          zone.style.display = 'none';
           return;
         }
 
-        const width = chartEl.clientWidth;
-        const height = chartEl.clientHeight;
         const rawLeft = Math.min(x1, x2);
         const rawRight = Math.max(x1, x2);
         const rawTop = Math.min(yUpper, yLower);
@@ -1377,15 +1481,14 @@
         const bottom = Math.max(0, Math.min(height, rawBottom));
 
         if (right - left < 2 || bottom - top < 2) {
-          zone.style.display = 'none';
           return;
         }
 
-        zone.style.display = 'block';
-        zone.style.left = `${left}px`;
-        zone.style.top = `${top}px`;
-        zone.style.width = `${right - left}px`;
-        zone.style.height = `${bottom - top}px`;
+        ctx.fillStyle = 'rgba(38, 166, 154, 0.12)';
+        ctx.strokeStyle = 'rgba(38, 166, 154, 0.58)';
+        ctx.lineWidth = 1;
+        ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+        ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
       };
 
       zone._update = update;
@@ -1761,14 +1864,18 @@
       requestAnimationFrame(updateOverlays);
     };
     document.getElementById('leftPanelBtn').onclick = () => {
+      const opening = app.classList.contains('left-collapsed');
       app.classList.toggle('left-collapsed');
+      if (opening) app.classList.add('right-collapsed');
       requestAnimationFrame(() => {
         chart.applyOptions(chartSize());
         updateOverlays();
       });
     };
     document.getElementById('rightPanelBtn').onclick = () => {
+      const opening = app.classList.contains('right-collapsed');
       app.classList.toggle('right-collapsed');
+      if (opening) app.classList.add('left-collapsed');
       requestAnimationFrame(() => {
         chart.applyOptions(chartSize());
         updateOverlays();

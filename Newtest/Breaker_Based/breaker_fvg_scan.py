@@ -11,6 +11,7 @@ import os
 # ── Config ────────────────────────────────────────────────────────────────────
 Ticker_df    = pd.read_csv('NSE_Symbols.csv')
 tickers_list = Ticker_df['Symbol'].tolist()
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://veerbhosale.github.io/Dashboard/")
 
 def telegram_alert(message):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -241,15 +242,17 @@ if Alert_List:
         f"Candle: {position}\n"
         f"Time: {alert_time_ist}\n\n"
         + ranked_lines
+        + f"\n\nDashboard: {DASHBOARD_URL}"
     )
     telegram_alert(message)
     print(message)
 else:
     no_signal_msg = (
-        f"Breaker+FVG Scanner ran — no signals at candle {position}.\n"
-        f"({breaker_hits} patterns exist elsewhere in the data window)"
+        f"Breaker+FVG Scanner ran - no signals at candle {position}.\n"
+        f"({breaker_hits} patterns exist elsewhere in the data window)\n\n"
+        f"Dashboard: {DASHBOARD_URL}"
     )
     telegram_alert(no_signal_msg)
     print(f"No Breaker+FVG signals at candle {position}.")
-    print(f"  → {breaker_hits} Breaker+FVG patterns exist elsewhere in the data window.")
+    print(f"  -> {breaker_hits} Breaker+FVG patterns exist elsewhere in the data window.")
     print(f"     Try position closer to 0 (e.g. -7, -14, -21) or check if the scan date has active setups.")
