@@ -73,6 +73,7 @@
       min-width: 0;
       min-height: 0;
       height: 100vh;
+      position: relative;
     }
 
     aside {
@@ -92,7 +93,12 @@
     .app.left-collapsed aside,
     .app.right-collapsed .details {
       border: 0;
-      visibility: hidden;
+      overflow: visible;
+    }
+
+    .app.left-collapsed aside > :not(.panel-toggle),
+    .app.right-collapsed .details > :not(.panel-toggle) {
+      display: none;
     }
 
     .topbar {
@@ -103,6 +109,11 @@
       justify-content: space-between;
       padding: 0 16px;
       background: #0f141a;
+    }
+
+    .chart-shell > .topbar {
+      background: rgba(15, 20, 26, 0.94);
+      backdrop-filter: blur(12px);
     }
 
     h1, h2, h3, p { margin: 0; }
@@ -127,6 +138,11 @@
       font-size: 13px;
     }
 
+    input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(41, 98, 255, 0.16);
+    }
+
     .watchlist {
       flex: 1;
       min-height: 0;
@@ -143,6 +159,7 @@
       border-radius: 6px;
       cursor: pointer;
       border: 1px solid transparent;
+      transition: background 120ms ease, border-color 120ms ease;
     }
 
     .ticker-row:hover { background: var(--panel-2); }
@@ -162,7 +179,8 @@
     .badge {
       font-size: 11px;
       color: #dff6ee;
-      background: #1f6f57;
+      background: rgba(38, 166, 154, 0.24);
+      border: 1px solid rgba(38, 166, 154, 0.26);
       padding: 3px 7px;
       border-radius: 999px;
     }
@@ -243,18 +261,19 @@
     .toolbar {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       min-width: 0;
     }
 
     button {
-      background: var(--panel-2);
+      background: #151b23;
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 8px 10px;
       cursor: pointer;
       font-size: 12px;
+      transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
     }
 
     button:hover { border-color: #506170; }
@@ -273,6 +292,47 @@
       justify-content: center;
       font-size: 15px;
       line-height: 1;
+    }
+
+    .panel-toggle {
+      position: absolute;
+      top: 12px;
+      z-index: 30;
+      width: 28px;
+      height: 44px;
+      padding: 0;
+      border-radius: 999px;
+      background: #151b23;
+      color: #c9d4df;
+      border: 1px solid #2c3642;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .panel-toggle.left {
+      right: -15px;
+    }
+
+    .panel-toggle.right {
+      left: -15px;
+    }
+
+    .app.left-collapsed .panel-toggle.left::before {
+      content: ">";
+    }
+
+    .app:not(.left-collapsed) .panel-toggle.left::before {
+      content: "<";
+    }
+
+    .app.right-collapsed .panel-toggle.right::before {
+      content: "<";
+    }
+
+    .app:not(.right-collapsed) .panel-toggle.right::before {
+      content: ">";
     }
 
     .details-body {
@@ -423,6 +483,7 @@
       border-radius: 6px;
       padding: 10px;
       cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease;
     }
 
     .signal-card:hover { border-color: #536677; }
@@ -496,14 +557,19 @@
 
       .app.left-collapsed aside {
         border-right: 1px solid var(--line);
-        transform: translateX(-104%);
+        transform: translateX(calc(-100% - 20px));
         visibility: visible;
       }
 
       .app.right-collapsed .details {
         border-left: 1px solid var(--line);
-        transform: translateX(104%);
+        transform: translateX(calc(100% + 20px));
         visibility: visible;
+      }
+
+      .app.left-collapsed aside > :not(.panel-toggle),
+      .app.right-collapsed .details > :not(.panel-toggle) {
+        display: flex;
       }
 
       .chart-shell {
@@ -521,6 +587,8 @@
 
       .chart-shell > .topbar {
         flex-direction: column;
+        padding-right: 48px;
+        padding-left: 48px;
       }
 
       h1 {
@@ -532,6 +600,7 @@
         gap: 6px;
         overflow-x: auto;
         padding-bottom: 2px;
+        justify-content: center;
       }
 
       button {
@@ -543,6 +612,24 @@
       .icon-btn {
         width: 34px;
         height: 34px;
+      }
+
+      .panel-toggle {
+        position: fixed;
+        top: 14px;
+        width: 30px;
+        height: 42px;
+        background: rgba(21, 27, 35, 0.96);
+      }
+
+      .panel-toggle.left {
+        left: 10px;
+        right: auto;
+      }
+
+      .panel-toggle.right {
+        right: 10px;
+        left: auto;
       }
 
       #chart {
@@ -562,6 +649,7 @@
 <body>
   <div class="app" id="app">
     <aside>
+      <button class="panel-toggle left" id="leftPanelBtn" title="Toggle watchlist" aria-label="Toggle watchlist"></button>
       <div class="topbar">
         <div>
           <h1>Breaker+FVG</h1>
@@ -581,17 +669,16 @@
           <p class="sub" id="chartSubtitle"></p>
         </div>
         <div class="toolbar">
-          <button class="icon-btn" id="leftPanelBtn" title="Toggle watchlist">WL</button>
           <button id="rollingLevelsBtn" title="Toggle rolling ISL/ISH context">ISL/ISH</button>
           <button id="fitBtn">Fit</button>
           <button id="lastSignalBtn">Last signal</button>
-          <button class="icon-btn" id="rightPanelBtn" title="Toggle details">DT</button>
         </div>
       </div>
       <div id="chart"><div class="chart-error" id="chartError"></div></div>
     </main>
 
     <section class="details">
+      <button class="panel-toggle right" id="rightPanelBtn" title="Toggle details" aria-label="Toggle details"></button>
       <div class="topbar">
         <div>
           <h1>Signal Details</h1>
