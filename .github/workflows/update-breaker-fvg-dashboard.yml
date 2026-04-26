@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   schedule:
     # Runs hourly during the regular NSE session.
-    # GitHub cron uses UTC: 04:45-09:45 UTC = 10:15 AM-3:15 PM IST.
-    - cron: "45 4-9 * * 1-5"
+    # GitHub cron uses UTC: 03:45-09:45 UTC = 9:15 AM-3:15 PM IST.
+    - cron: "45 3-9 * * 1-5"
 
 permissions:
   contents: write
