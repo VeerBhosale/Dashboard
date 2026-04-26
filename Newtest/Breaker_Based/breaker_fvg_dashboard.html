@@ -250,21 +250,6 @@
       border-left: 1px dotted currentColor;
     }
 
-    .level-label {
-      position: absolute;
-      z-index: 3;
-      pointer-events: none;
-      padding: 1px 4px;
-      border-radius: 3px;
-      background: rgba(11, 14, 17, 0.76);
-      font-size: 11px;
-      font-weight: 750;
-      line-height: 14px;
-      letter-spacing: 0;
-      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
-      transform: translateY(-100%);
-    }
-
     .toolbar {
       display: flex;
       align-items: center;
@@ -688,9 +673,6 @@
         grid-template-columns: 1fr;
       }
 
-      .level-label {
-        font-size: 10px;
-      }
     }
   </style>
 </head>
@@ -794,11 +776,12 @@
       ticker: null,
       signal: null,
       levelSeries: [],
-      levelLabels: [],
       fvgZones: [],
       rollingVisible: false,
       rollingSeries: [],
       rollingOverlays: [],
+      overlayFrame: null,
+      overlayLoopUntil: 0,
     };
 
     const app = document.getElementById('app');
@@ -919,9 +902,15 @@
       chart.applyOptions(chartSize());
       updateOverlays();
     }).observe(chartEl);
-    chart.timeScale().subscribeVisibleTimeRangeChange(updateOverlays);
-    chartEl.addEventListener('mousemove', updateOverlays);
-    chartEl.addEventListener('wheel', () => requestAnimationFrame(updateOverlays), { passive: true });
+    chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayUpdate);
+    chartEl.addEventListener('mousemove', scheduleOverlayUpdate);
+    chartEl.addEventListener('pointerdown', () => startOverlayLoop(1200), { passive: true });
+    chartEl.addEventListener('pointermove', () => startOverlayLoop(500), { passive: true });
+    chartEl.addEventListener('pointerup', () => startOverlayLoop(500), { passive: true });
+    chartEl.addEventListener('touchstart', () => startOverlayLoop(1200), { passive: true });
+    chartEl.addEventListener('touchmove', () => startOverlayLoop(500), { passive: true });
+    chartEl.addEventListener('touchend', () => startOverlayLoop(500), { passive: true });
+    chartEl.addEventListener('wheel', () => startOverlayLoop(500), { passive: true });
 
     function fmt(value, digits = 2) {
       if (value === null || value === undefined || Number.isNaN(value)) return 'n/a';
@@ -1423,18 +1412,6 @@
     }
 
     function clearLevelLabels() {
-      state.levelLabels.forEach(label => label.el.remove());
-      state.levelLabels = [];
-    }
-
-    function addLevelLabel(text, endTime, price, color) {
-      const el = document.createElement('div');
-      el.className = 'level-label';
-      el.textContent = text;
-      el.style.color = color;
-      chartEl.appendChild(el);
-      state.levelLabels.push({ el, endTime, price });
-      updateLevelLabels();
     }
 
     function addFvgZone(startTime, endTime, lower, upper) {
@@ -1625,32 +1602,30 @@
       });
     }
 
-    function updateLevelLabels() {
-      state.levelLabels.forEach(label => {
-        const x = chart.timeScale().timeToCoordinate(label.endTime);
-        const y = candleSeries.priceToCoordinate(label.price);
-        if (x === null || x === undefined || y === null || y === undefined) {
-          label.el.style.display = 'none';
-          return;
-        }
-
-        const labelWidth = label.el.offsetWidth || 28;
-        const left = x - labelWidth - 5;
-        const top = y - 3;
-        if (left < 0 || left + labelWidth > chartEl.clientWidth || top < 12 || top > chartEl.clientHeight) {
-          label.el.style.display = 'none';
-          return;
-        }
-        label.el.style.display = 'block';
-        label.el.style.left = `${left}px`;
-        label.el.style.top = `${top}px`;
-      });
-    }
-
     function updateOverlays() {
       updateFvgZones();
       updateRollingOverlays();
-      updateLevelLabels();
+    }
+
+    function scheduleOverlayUpdate() {
+      if (state.overlayFrame) return;
+      state.overlayFrame = requestAnimationFrame(() => {
+        state.overlayFrame = null;
+        updateOverlays();
+      });
+    }
+
+    function startOverlayLoop(durationMs = 500) {
+      state.overlayLoopUntil = Math.max(state.overlayLoopUntil, performance.now() + durationMs);
+      if (state.overlayFrame) return;
+      const tick = () => {
+        state.overlayFrame = null;
+        updateOverlays();
+        if (performance.now() < state.overlayLoopUntil) {
+          state.overlayFrame = requestAnimationFrame(tick);
+        }
+      };
+      state.overlayFrame = requestAnimationFrame(tick);
     }
 
     function addLevelSegment(sourceName, displayLabel, startTime, endTime, price, color) {
@@ -1673,8 +1648,15 @@
         { time: startTime, value: price },
         { time: endTime, value: price },
       ]);
+      series.setMarkers([{
+        time: endTime,
+        position: 'inBar',
+        color,
+        shape: 'circle',
+        text: displayLabel,
+        size: 1,
+      }]);
       state.levelSeries.push(series);
-      addLevelLabel(displayLabel, endTime, price, color);
     }
 
     function renderAllSignalLevels(item) {
