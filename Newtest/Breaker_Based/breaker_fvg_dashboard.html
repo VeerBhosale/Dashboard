@@ -1,0 +1,1565 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Breaker+FVG Watchlist</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="./breaker_fvg_dashboard_data.js"></script>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #11161d;
+      --panel-2: #171d25;
+      --line: #242c36;
+      --text: #d5dde5;
+      --muted: #8a96a3;
+      --accent: #26a69a;
+      --danger: #ef5350;
+      --warn: #f9a825;
+      --blue: #2962ff;
+    }
+
+    * { box-sizing: border-box; }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #3a4653 #0d1117;
+    }
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    *::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: #3a4653;
+      border: 2px solid #0d1117;
+      border-radius: 999px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: #53616e;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr) 360px;
+      height: 100vh;
+    }
+
+    .app.left-collapsed {
+      grid-template-columns: 0 minmax(0, 1fr) 360px;
+    }
+
+    .app.right-collapsed {
+      grid-template-columns: 300px minmax(0, 1fr) 0;
+    }
+
+    .app.left-collapsed.right-collapsed {
+      grid-template-columns: 0 minmax(0, 1fr) 0;
+    }
+
+    aside, .details {
+      background: var(--panel);
+      border-color: var(--line);
+      min-width: 0;
+      min-height: 0;
+      height: 100vh;
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .details {
+      border-left: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .app.left-collapsed aside,
+    .app.right-collapsed .details {
+      border: 0;
+      visibility: hidden;
+    }
+
+    .topbar {
+      height: 56px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: #0f141a;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 16px; font-weight: 650; }
+    h2 { font-size: 14px; font-weight: 650; }
+    h3 { font-size: 13px; font-weight: 650; color: var(--muted); }
+    .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+    .search {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    input {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 11px;
+      outline: none;
+      font-size: 13px;
+    }
+
+    .watchlist {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 6px;
+    }
+
+    .ticker-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .ticker-row:hover { background: var(--panel-2); }
+    .ticker-row.active {
+      border-color: #395063;
+      background: #1b2630;
+    }
+
+    .symbol {
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      font-size: 11px;
+      color: #dff6ee;
+      background: #1f6f57;
+      padding: 3px 7px;
+      border-radius: 999px;
+    }
+
+    .chart-shell {
+      min-width: 0;
+      min-height: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 56px minmax(0, 1fr);
+    }
+
+    #chart {
+      width: 100%;
+      height: 100%;
+      min-height: 320px;
+      position: relative;
+      overflow: hidden;
+      background: #0b0e11;
+    }
+
+    .chart-error {
+      position: absolute;
+      inset: 12px;
+      z-index: 5;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #171c22;
+      color: var(--warn);
+      text-align: center;
+      padding: 20px;
+      font-size: 13px;
+    }
+
+    .fvg-zone {
+      position: absolute;
+      z-index: 1;
+      pointer-events: none;
+      border: 1px solid rgba(38, 166, 154, 0.58);
+      background: rgba(38, 166, 154, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(38, 166, 154, 0.08);
+      min-width: 2px;
+    }
+
+    .rolling-pool-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .rolling-connector {
+      position: absolute;
+      z-index: 2;
+      pointer-events: none;
+      width: 0;
+      border-left: 1px dotted currentColor;
+    }
+
+    .level-label {
+      position: absolute;
+      z-index: 3;
+      pointer-events: none;
+      padding: 1px 4px;
+      border-radius: 3px;
+      background: rgba(11, 14, 17, 0.76);
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 14px;
+      letter-spacing: 0;
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
+      transform: translateY(-100%);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    button:hover { border-color: #506170; }
+    button.active {
+      border-color: var(--accent);
+      color: #e7fff8;
+      background: #16342e;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      line-height: 1;
+    }
+
+    .details-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .section {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .metric {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px;
+      min-width: 0;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .metric strong {
+      font-size: 13px;
+      word-break: break-word;
+    }
+
+    .probability-meter {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+    }
+
+    .meter-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .meter-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    .meter-value {
+      font-size: 18px;
+      font-weight: 750;
+    }
+
+    .meter-stage {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .meter-arc {
+      position: relative;
+      height: 82px;
+      overflow: hidden;
+      border-bottom: 1px solid #2b343f;
+    }
+
+    .meter-band {
+      position: absolute;
+      left: 50%;
+      bottom: -88px;
+      width: 176px;
+      height: 176px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: conic-gradient(from 270deg, #ef5350 0deg 60deg, #f9a825 60deg 120deg, #26a69a 120deg 180deg, transparent 180deg 360deg);
+    }
+
+    .meter-band::after {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 50%;
+      background: var(--panel-2);
+    }
+
+    .meter-needle {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: 3px;
+      height: 74px;
+      background: #e8eef4;
+      border-radius: 999px;
+      transform-origin: 50% 100%;
+      transform: translateX(-50%) rotate(-90deg);
+      box-shadow: 0 0 8px rgba(232, 238, 244, 0.35);
+    }
+
+    .meter-needle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -5px;
+      width: 11px;
+      height: 11px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: #e8eef4;
+    }
+
+    .meter-labels {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .signal-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .signal-card {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 10px;
+      cursor: pointer;
+    }
+
+    .signal-card:hover { border-color: #536677; }
+    .signal-card.active { border-color: var(--accent); }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .score {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 12px 2px;
+    }
+
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 240px minmax(0, 1fr); }
+      .details { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside>
+      <div class="topbar">
+        <div>
+          <h1>Breaker+FVG</h1>
+          <p class="sub" id="generatedAt">Loading data...</p>
+        </div>
+      </div>
+      <div class="search">
+        <input id="search" placeholder="Search ticker" />
+      </div>
+      <div class="watchlist" id="watchlist"></div>
+    </aside>
+
+    <main class="chart-shell">
+      <div class="topbar">
+        <div>
+          <h1 id="chartTitle">Select a ticker</h1>
+          <p class="sub" id="chartSubtitle"></p>
+        </div>
+        <div class="toolbar">
+          <button class="icon-btn" id="leftPanelBtn" title="Toggle watchlist">WL</button>
+          <button id="rollingLevelsBtn" title="Toggle rolling ISL/ISH context">ISL/ISH</button>
+          <button id="fitBtn">Fit</button>
+          <button id="lastSignalBtn">Last signal</button>
+          <button class="icon-btn" id="rightPanelBtn" title="Toggle details">DT</button>
+        </div>
+      </div>
+      <div id="chart"><div class="chart-error" id="chartError"></div></div>
+    </main>
+
+    <section class="details">
+      <div class="topbar">
+        <div>
+          <h1>Signal Details</h1>
+          <p class="sub" id="signalSummary">No signal selected</p>
+        </div>
+      </div>
+      <div class="details-body">
+        <div class="section">
+          <h2>Selected Signal</h2>
+          <div id="probabilityMeter"></div>
+          <div class="metrics" id="metrics"></div>
+        </div>
+        <div class="section">
+          <h2>Signals</h2>
+          <div class="signal-list" id="signals"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const data = window.BREAKER_FVG_DATA || { tickers: [] };
+    const tickers = [...data.tickers].sort((a, b) => b.signals.length - a.signals.length || a.ticker.localeCompare(b.ticker));
+    const state = {
+      ticker: null,
+      signal: null,
+      levelSeries: [],
+      levelLabels: [],
+      fvgZones: [],
+      rollingVisible: false,
+      rollingSeries: [],
+      rollingOverlays: [],
+    };
+
+    const app = document.getElementById('app');
+    const generatedAt = document.getElementById('generatedAt');
+    const watchlist = document.getElementById('watchlist');
+    const search = document.getElementById('search');
+    const chartTitle = document.getElementById('chartTitle');
+    const chartSubtitle = document.getElementById('chartSubtitle');
+    const signalsEl = document.getElementById('signals');
+    const metricsEl = document.getElementById('metrics');
+    const probabilityMeterEl = document.getElementById('probabilityMeter');
+    const signalSummary = document.getElementById('signalSummary');
+
+    const istDateTime = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const istTickTime = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
+    function formatIstTimestamp(time) {
+      if (!time) return '';
+      return istDateTime.format(new Date(time * 1000));
+    }
+
+    function formatIstTick(time) {
+      const ts = typeof time === 'object' ? Date.UTC(time.year, (time.month || 1) - 1, time.day || 1) / 1000 : time;
+      return istTickTime.format(new Date(ts * 1000));
+    }
+
+    generatedAt.textContent = data.generated_at ? `Generated ${istDateTime.format(new Date(data.generated_at))}` : 'No data generated';
+    if ((data.schema_version || 1) < 2) {
+      generatedAt.textContent += ' - legacy data';
+    }
+
+    const chartEl = document.getElementById('chart');
+    const chartError = document.getElementById('chartError');
+
+    function showChartError(message) {
+      chartError.textContent = message;
+      chartError.style.display = 'flex';
+    }
+
+    if (!window.LightweightCharts) {
+      showChartError('Chart library did not load. Start a local server or check internet access for lightweight-charts.');
+      throw new Error('LightweightCharts not loaded');
+    }
+
+    const chart = LightweightCharts.createChart(chartEl, {
+      width: Math.max(chartEl.clientWidth, 600),
+      height: Math.max(chartEl.clientHeight, 320),
+      layout: { background: { color: '#0b0e11' }, textColor: '#cfd8dc' },
+      grid: { vertLines: { color: '#1b222b' }, horzLines: { color: '#1b222b' } },
+      rightPriceScale: { borderColor: '#242c36', textColor: '#cfd8dc' },
+      timeScale: {
+        borderColor: '#242c36',
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: formatIstTick,
+      },
+      localization: {
+        timeFormatter: formatIstTick,
+      },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      borderDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
+
+    new ResizeObserver(() => {
+      chart.applyOptions({
+        width: Math.max(chartEl.clientWidth, 600),
+        height: Math.max(chartEl.clientHeight, 320),
+      });
+      updateOverlays();
+    }).observe(chartEl);
+    chart.timeScale().subscribeVisibleTimeRangeChange(updateOverlays);
+    chartEl.addEventListener('mousemove', updateOverlays);
+    chartEl.addEventListener('wheel', () => requestAnimationFrame(updateOverlays), { passive: true });
+
+    function fmt(value, digits = 2) {
+      if (value === null || value === undefined || Number.isNaN(value)) return 'n/a';
+      if (typeof value === 'boolean') return value ? 'yes' : 'no';
+      if (typeof value === 'number') return value.toFixed(digits);
+      return value;
+    }
+
+    function renderWatchlist() {
+      const q = search.value.trim().toLowerCase();
+      watchlist.innerHTML = '';
+      tickers.filter(item => item.ticker.toLowerCase().includes(q)).forEach(item => {
+        const row = document.createElement('div');
+        row.className = `ticker-row${state.ticker?.ticker === item.ticker ? ' active' : ''}`;
+        row.innerHTML = `<div><div class="symbol">${item.ticker}</div><div class="sub">${item.candles.length} candles</div></div><div class="badge">${item.signals.length}</div>`;
+        row.onclick = () => selectTicker(item);
+        watchlist.appendChild(row);
+      });
+    }
+
+    function markerForSignal(signal, index) {
+      return {
+        time: signal.time,
+        position: 'aboveBar',
+        color: '#5c9ded',
+        shape: 'arrowDown',
+        text: `B+FVG ${index + 1}`,
+      };
+    }
+
+    function selectTicker(item) {
+      state.ticker = item;
+      state.signal = item.signals.at(-1) || null;
+      chartTitle.textContent = item.ticker;
+      chartSubtitle.textContent = `${item.signals.length} Breaker+FVG signals`;
+      try {
+        clearRollingLevels();
+        candleSeries.setData(item.candles);
+        candleSeries.setMarkers(item.signals.map(markerForSignal));
+        if (state.rollingVisible) renderRollingLevels();
+        renderAllSignalLevels(item);
+        chartError.style.display = 'none';
+      } catch (err) {
+        showChartError(`Could not render chart for ${item.ticker}: ${err.message}`);
+        console.error(err);
+      }
+      renderSignals();
+      renderSelectedSignal();
+      renderWatchlist();
+      requestAnimationFrame(() => {
+        candleSeries.priceScale().applyOptions({ autoScale: true });
+        chart.timeScale().fitContent();
+        updateOverlays();
+      });
+    }
+
+    function renderSignals() {
+      signalsEl.innerHTML = '';
+      if (!state.ticker || state.ticker.signals.length === 0) {
+        signalsEl.innerHTML = '<div class="empty">No Breaker+FVG signals in this export.</div>';
+        return;
+      }
+
+      state.ticker.signals.slice().reverse().forEach((signal, reverseIndex) => {
+        const index = state.ticker.signals.length - reverseIndex;
+        const signalTimes = signal.level_times || deriveLevelTimesFromSwings(signal);
+        const bullFvg = deriveBullFvgRetest(signal, signalTimes);
+        if (bullFvg) signal.metrics = { ...(signal.metrics || {}), ...bullFvg };
+        const card = document.createElement('div');
+        card.className = `signal-card${state.signal === signal ? ' active' : ''}`;
+        card.innerHTML = `
+          <div class="row"><strong>Signal ${index}</strong><span class="score">${fmt(signal.score, 4)}</span></div>
+          <div class="row"><span>${formatIstTimestamp(signal.time)}</span><span>${signal.isl_sweep ? 'ISL sweep' : 'No ISL sweep'}</span></div>
+          <div class="row"><span>lows ${signal.metrics.protected_lows}</span><span>bull FVG ${signal.metrics.bull_fvg_retest ? 'yes' : 'no'}</span></div>
+        `;
+        card.onclick = () => {
+          state.signal = signal;
+          renderSignals();
+          renderSelectedSignal();
+          focusSignal(signal);
+        };
+        signalsEl.appendChild(card);
+      });
+    }
+
+    function addMetric(label, value) {
+      const div = document.createElement('div');
+      div.className = 'metric';
+      div.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+      metricsEl.appendChild(div);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function norm(value, low, high) {
+      if (value === null || value === undefined || Number.isNaN(value)) return 0;
+      return clamp((value - low) / (high - low), 0, 1);
+    }
+
+    function signalProbability(signal) {
+      const m = signal.metrics || {};
+      const sharpness =
+        0.34 * norm(signal.atr_ratio, 0.92, 1.45)
+        + 0.30 * norm(signal.fvg_atr, 0.30, 1.02)
+        + 0.18 * norm(signal.score, 0.58, 1.85);
+      const liquidity =
+        0.06 * norm(m.protected_lows || 0, 0, 2)
+        + 0.04 * norm(m.low_hold || 0, 0, 10)
+        + 0.04 * (m.bull_fvg_retest ? 1 : 0)
+        + 0.04 * (m.current_isl_swept || signal.isl_sweep ? 1 : 0);
+      const risk =
+        0.08 * (m.deeper_isl_pending && (m.deeper_isl_atr || 0) < 1.0 ? 1 : 0)
+        + 0.05 * (signal.atr_ratio !== null && signal.atr_ratio !== undefined && signal.atr_ratio < 0.92 ? 1 : 0)
+        + 0.05 * (signal.fvg_atr !== null && signal.fvg_atr !== undefined && signal.fvg_atr < 0.30 ? 1 : 0);
+
+      const probability = clamp(0.22 + sharpness + liquidity - risk, 0.05, 0.92);
+      let stage = 'Neutral';
+      if (probability < 0.4) stage = 'Bad';
+      if (probability >= 0.65) stage = 'Good';
+      return { probability, stage };
+    }
+
+    function renderProbabilityMeter(signal) {
+      if (!signal) {
+        probabilityMeterEl.innerHTML = '';
+        return;
+      }
+      const { probability, stage } = signalProbability(signal);
+      const pct = Math.round(probability * 100);
+      const angle = -90 + probability * 180;
+      probabilityMeterEl.innerHTML = `
+        <div class="probability-meter">
+          <div class="meter-head">
+            <div>
+              <div class="meter-title">Success Probability</div>
+              <div class="meter-stage">${stage}</div>
+            </div>
+            <div class="meter-value">${pct}%</div>
+          </div>
+          <div class="meter-arc">
+            <div class="meter-band"></div>
+            <div class="meter-needle" style="transform: translateX(-50%) rotate(${angle}deg);"></div>
+          </div>
+          <div class="meter-labels"><span>Bad</span><span>Neutral</span><span>Good</span></div>
+        </div>
+      `;
+    }
+
+    function clearLevelSeries() {
+      state.levelSeries.forEach(series => chart.removeSeries(series));
+      state.levelSeries = [];
+      clearLevelLabels();
+      clearFvgZones();
+    }
+
+    function clearRollingLevels() {
+      state.rollingSeries.forEach(series => chart.removeSeries(series));
+      state.rollingSeries = [];
+      state.rollingOverlays.forEach(overlay => overlay.el.remove());
+      state.rollingOverlays = [];
+    }
+
+    function candleTimeAfter(startTime, bars = 14) {
+      const candles = state.ticker?.candles || [];
+      const idx = candles.findIndex(c => c.time >= startTime);
+      if (idx < 0) return startTime;
+      return candles[Math.min(candles.length - 1, idx + bars)].time;
+    }
+
+    function candleIndexAtOrAfter(time) {
+      const candles = state.ticker?.candles || [];
+      return candles.findIndex(c => c.time >= time);
+    }
+
+    function priceFitsCurrentTicker(price) {
+      if (price === null || price === undefined || Number.isNaN(price)) return false;
+      const candles = state.ticker?.candles || [];
+      if (!candles.length) return false;
+
+      let minLow = Infinity;
+      let maxHigh = -Infinity;
+      candles.forEach(c => {
+        if (Number.isFinite(c.low)) minLow = Math.min(minLow, c.low);
+        if (Number.isFinite(c.high)) maxHigh = Math.max(maxHigh, c.high);
+      });
+      if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh)) return false;
+
+      const range = Math.max(maxHigh - minLow, Math.abs(maxHigh) * 0.02, 1);
+      const pad = range * 0.25;
+      return price >= minLow - pad && price <= maxHigh + pad;
+    }
+
+    function timeFitsCurrentTicker(time) {
+      if (!time) return false;
+      const candles = state.ticker?.candles || [];
+      if (!candles.length) return false;
+      return time >= candles[0].time && time <= candles[candles.length - 1].time;
+    }
+
+    function levelMatchesStartCandle(label, startTime, price) {
+      const candles = state.ticker?.candles || [];
+      const candle = candles.find(c => c.time === startTime);
+      if (!candle) return false;
+
+      const field = label.includes('High') || label.includes('ISH') ? 'high' : 'low';
+      const candlePrice = candle[field];
+      if (!Number.isFinite(candlePrice)) return false;
+
+      const tolerance = Math.max(Math.abs(price) * 0.001, 0.05);
+      return Math.abs(candlePrice - price) <= tolerance;
+    }
+
+    function inferLevelTime(signal, name, price) {
+      if (!state.ticker || price === null || price === undefined || Number.isNaN(price)) return null;
+      const candles = state.ticker.candles || [];
+      const signalIndex = candles.findIndex(c => c.time >= signal.time);
+      const end = signalIndex >= 0 ? signalIndex : candles.length - 1;
+      const field = name.includes('High') || name.includes('ISH') ? 'high' : 'low';
+      const tolerance = Math.max(Math.abs(price) * 0.0005, 0.01);
+
+      for (let i = end; i >= 0; i -= 1) {
+        if (Math.abs(candles[i][field] - price) <= tolerance) {
+          return candles[i].time;
+        }
+      }
+      return signal.time;
+    }
+
+    function nearlyEqual(a, b) {
+      if (a === null || a === undefined || b === null || b === undefined) return false;
+      return Math.abs(a - b) <= Math.max(Math.abs(b) * 0.0005, 0.01);
+    }
+
+    function deriveLevelTimesFromSwings(signal) {
+      const swings = state.ticker?.swings || [];
+      const levels = signal.levels || {};
+      const signalSwingIndex = swings.findIndex(s => s.time === signal.time && s.type === 'high');
+      const times = {};
+
+      if (signalSwingIndex >= 3) {
+        times['T3 Low'] = swings[signalSwingIndex - 3].time;
+        times['T2 High'] = swings[signalSwingIndex - 2].time;
+        times['T1 Sweep Low'] = swings[signalSwingIndex - 1].time;
+        times['Signal High'] = swings[signalSwingIndex].time;
+      }
+
+      const sellside = deriveSellsideLiquidityFromSwings(signal, times);
+      if (sellside.current) {
+        levels['Current ISL'] = sellside.current.price;
+        times['Current ISL'] = sellside.current.time;
+      } else {
+        delete levels['Current ISL'];
+        delete times['Current ISL'];
+      }
+      if (sellside.base) {
+        levels['Base ISL'] = sellside.base.price;
+        times['Base ISL'] = sellside.base.time;
+      } else {
+        delete levels['Base ISL'];
+        delete times['Base ISL'];
+      }
+
+      return times;
+    }
+
+    function deriveSellsideLiquidityFromSwings(signal, times) {
+      const swings = state.ticker?.swings || [];
+      const levels = signal.levels || {};
+      const t3Time = times['T3 Low'];
+      const t1Time = times['T1 Sweep Low'];
+      const t3Low = levels['T3 Low'];
+      const t1Low = levels['T1 Sweep Low'];
+      if (!t3Time || !t1Time || t3Low === null || t3Low === undefined || t1Low === null || t1Low === undefined) {
+        return { current: null, base: null, active: [] };
+      }
+
+      const lowSwings = swings.filter(s => s.type === 'low');
+      const islLevels = [];
+      for (let i = 1; i < lowSwings.length - 1; i += 1) {
+        if (lowSwings[i].price < lowSwings[i - 1].price && lowSwings[i].price < lowSwings[i + 1].price) {
+          islLevels.push(lowSwings[i]);
+        }
+      }
+
+      const active = islLevels.filter(level => {
+        if (level.time >= t3Time) return false;
+        return !islLevels.some(other =>
+          other.time > level.time
+          && other.time < t1Time
+          && other.price < level.price
+        );
+      });
+
+      active.forEach(level => {
+        level.swept = t1Low < level.price;
+      });
+      const current = active.at(-1) || null;
+      if (!current) return { current: null, base: null, active };
+
+      let base = current;
+      for (let i = active.length - 2; i >= 0; i -= 1) {
+        if (active[i].price < base.price) {
+          base = active[i];
+        } else {
+          break;
+        }
+      }
+      return { current, base, active };
+    }
+
+    function resolveTargetIsh(signal) {
+      const derived = deriveTargetIshFromSwings(signal);
+      if (derived) return derived;
+
+      const levels = signal.levels || {};
+      const times = signal.level_times || {};
+      const price = levels['Base ISH'];
+      const time = times['Base ISH'];
+      const signalHigh = levels['Signal High'];
+      if (price === null || price === undefined || !time) return null;
+      if (signalHigh !== null && signalHigh !== undefined && price <= signalHigh) return null;
+      return { price, time };
+    }
+
+    function deriveTargetIshFromSwings(signal) {
+      const swings = state.ticker?.swings || [];
+      const levels = signal.levels || {};
+      const signalHigh = levels['Signal High'];
+      const swingHighs = swings.filter(s => s.type === 'high');
+      const ishLevels = [];
+
+      for (let i = 1; i < swingHighs.length - 1; i += 1) {
+        if (swingHighs[i].price > swingHighs[i - 1].price && swingHighs[i].price > swingHighs[i + 1].price) {
+          ishLevels.push(swingHighs[i]);
+        }
+      }
+
+      const priorIsh = ishLevels.filter(s => s.time < signal.time);
+      if (!priorIsh.length) return null;
+
+      const selected = priorIsh.at(-1);
+      if (signalHigh !== null && signalHigh !== undefined && selected.price <= signalHigh) return null;
+      return selected;
+    }
+
+    function deriveRollingLevelsFromSwings() {
+      const swings = state.ticker?.swings || [];
+      const lows = swings.filter(s => s.type === 'low');
+      const highs = swings.filter(s => s.type === 'high');
+      const isl = [];
+      const ish = [];
+
+      for (let i = 1; i < lows.length - 1; i += 1) {
+        if (lows[i].price < lows[i - 1].price && lows[i].price < lows[i + 1].price) {
+          isl.push({ time: lows[i].time, value: lows[i].price });
+        }
+      }
+
+      for (let i = 1; i < highs.length - 1; i += 1) {
+        if (highs[i].price > highs[i - 1].price && highs[i].price > highs[i + 1].price) {
+          ish.push({ time: highs[i].time, value: highs[i].price });
+        }
+      }
+
+      return { isl, ish, end_time: state.ticker?.candles?.at(-1)?.time || null };
+    }
+
+    function rollingLevelsForTicker() {
+      const exported = state.ticker?.rolling_levels;
+      if (exported?.isl || exported?.ish) {
+        return {
+          isl: exported.isl || [],
+          ish: exported.ish || [],
+          end_time: exported.end_time || state.ticker?.candles?.at(-1)?.time || null,
+        };
+      }
+      return deriveRollingLevelsFromSwings();
+    }
+
+    function addRollingPoolCanvas(key, events, endTime, color) {
+      const el = document.createElement('canvas');
+      el.className = 'rolling-pool-canvas';
+      chartEl.appendChild(el);
+      state.rollingOverlays.push({ el, type: 'poolCanvas', key, events, endTime, color });
+    }
+
+    function addRollingConnector(time, fromPrice, toPrice, color) {
+      if (!time || fromPrice === null || toPrice === null || fromPrice === undefined || toPrice === undefined) return;
+      if (fromPrice === toPrice) return;
+      const el = document.createElement('div');
+      el.className = 'rolling-connector';
+      el.style.color = color;
+      chartEl.appendChild(el);
+      state.rollingOverlays.push({ el, type: 'connector', time, fromPrice, toPrice });
+    }
+
+    function renderRollingLevels() {
+      clearRollingLevels();
+      if (!state.ticker || !state.rollingVisible) return;
+
+      const levels = rollingLevelsForTicker();
+      const configs = [
+        ['isl', '#ffb74d', { fill: 'rgba(38, 166, 154, 0.12)', stroke: 'rgba(38, 166, 154, 0.28)' }],
+        ['ish', '#42a5f5', { fill: 'rgba(239, 83, 80, 0.12)', stroke: 'rgba(239, 83, 80, 0.28)' }],
+      ];
+
+      const fallbackEnd = state.ticker?.candles?.at(-1)?.time || null;
+      configs.forEach(([key, color, poolColor]) => {
+        const events = (levels[key] || [])
+          .filter(point => point.time && point.value !== null && point.value !== undefined)
+          .map(point => ({ time: point.time, value: point.value }));
+        if (!events.length) return;
+        addRollingPoolCanvas(key, events, levels.end_time || fallbackEnd, poolColor);
+
+        events.forEach((event, index) => {
+          const endTime = events[index + 1]?.time || levels.end_time || fallbackEnd;
+          if (!endTime || endTime <= event.time) return;
+
+          if (index > 0) {
+            addRollingConnector(event.time, events[index - 1].value, event.value, color);
+          }
+
+          const series = chart.addLineSeries({
+            color,
+            lineWidth: 1,
+            lineStyle: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          series.setData([
+            { time: event.time, value: event.value },
+            { time: endTime, value: event.value },
+          ]);
+          state.rollingSeries.push(series);
+        });
+      });
+      requestAnimationFrame(updateOverlays);
+    }
+
+    function deriveBullFvgRetest(signal, times) {
+      const candles = state.ticker?.candles || [];
+      const t1Time = times['T1 Sweep Low'];
+      if (!t1Time) return null;
+
+      const t1Index = candles.findIndex(c => c.time === t1Time);
+      if (t1Index < 2) return null;
+
+      const t1Low = signal.levels?.['T1 Sweep Low'] ?? candles[t1Index].low;
+      const active = [];
+      const touched = [];
+
+      for (let i = 2; i < t1Index; i += 1) {
+        const lower = candles[i - 2].high;
+        const upper = candles[i].low;
+        if (!(upper > lower)) continue;
+
+        let invalidated = false;
+        for (let j = i + 1; j < t1Index; j += 1) {
+          if (candles[j].low < lower) {
+            invalidated = true;
+            break;
+          }
+        }
+        if (invalidated) continue;
+
+        const fvg = { time: candles[i - 2].time, lower, upper };
+        active.push(fvg);
+        if (lower <= t1Low && t1Low <= upper) {
+          const fill = (upper - t1Low) / (upper - lower);
+          touched.push({
+            ...fvg,
+            fill: Math.max(0, Math.min(fill, 1)),
+            age: t1Index - i,
+          });
+        }
+      }
+
+      const selected = touched.at(-1);
+      return {
+        bull_fvg_retest: Boolean(selected),
+        active_bull_fvgs: active.length,
+        bull_fvg_lower: selected ? selected.lower : null,
+        bull_fvg_upper: selected ? selected.upper : null,
+        bull_fvg_fill: selected ? selected.fill : null,
+        bull_fvg_age: selected ? selected.age : null,
+        bull_fvg_time: selected ? selected.time : null,
+      };
+    }
+
+    function clearFvgZones() {
+      state.fvgZones.forEach(zone => zone.remove());
+      state.fvgZones = [];
+    }
+
+    function clearLevelLabels() {
+      state.levelLabels.forEach(label => label.el.remove());
+      state.levelLabels = [];
+    }
+
+    function addLevelLabel(text, endTime, price, color) {
+      const el = document.createElement('div');
+      el.className = 'level-label';
+      el.textContent = text;
+      el.style.color = color;
+      chartEl.appendChild(el);
+      state.levelLabels.push({ el, endTime, price });
+      updateLevelLabels();
+    }
+
+    function addFvgZone(startTime, endTime, lower, upper) {
+      if (!startTime || !endTime || lower === null || upper === null || lower === undefined || upper === undefined) return;
+      if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
+      if (!priceFitsCurrentTicker(lower) || !priceFitsCurrentTicker(upper)) return;
+      const zone = document.createElement('div');
+      zone.className = 'fvg-zone';
+      chartEl.appendChild(zone);
+      state.fvgZones.push(zone);
+
+      const update = () => {
+        const x1 = chart.timeScale().timeToCoordinate(startTime);
+        const x2 = chart.timeScale().timeToCoordinate(endTime);
+        const yUpper = candleSeries.priceToCoordinate(upper);
+        const yLower = candleSeries.priceToCoordinate(lower);
+
+        if ([x1, x2, yUpper, yLower].some(v => v === null || v === undefined)) {
+          zone.style.display = 'none';
+          return;
+        }
+
+        const width = chartEl.clientWidth;
+        const height = chartEl.clientHeight;
+        const rawLeft = Math.min(x1, x2);
+        const rawRight = Math.max(x1, x2);
+        const rawTop = Math.min(yUpper, yLower);
+        const rawBottom = Math.max(yUpper, yLower);
+
+        const left = Math.max(0, Math.min(width, rawLeft));
+        const right = Math.max(0, Math.min(width, rawRight));
+        const top = Math.max(0, Math.min(height, rawTop));
+        const bottom = Math.max(0, Math.min(height, rawBottom));
+
+        if (right - left < 2 || bottom - top < 2) {
+          zone.style.display = 'none';
+          return;
+        }
+
+        zone.style.display = 'block';
+        zone.style.left = `${left}px`;
+        zone.style.top = `${top}px`;
+        zone.style.width = `${right - left}px`;
+        zone.style.height = `${bottom - top}px`;
+      };
+
+      zone._update = update;
+      update();
+    }
+
+    function updateFvgZones() {
+      state.fvgZones.forEach(zone => zone._update && zone._update());
+    }
+
+    function drawRollingPoolCanvas(overlay) {
+      const canvas = overlay.el;
+      const width = chartEl.clientWidth;
+      const height = chartEl.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      }
+
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = overlay.color.fill;
+      ctx.strokeStyle = overlay.color.stroke;
+      ctx.lineWidth = 1;
+
+      const swings = state.ticker?.swings || [];
+      const isIsl = overlay.key === 'isl';
+      const swingType = isIsl ? 'low' : 'high';
+
+      overlay.events.forEach((event, index) => {
+        const segmentEnd = overlay.events[index + 1]?.time || overlay.endTime;
+        if (!segmentEnd || segmentEnd <= event.time) return;
+
+        const baseY = candleSeries.priceToCoordinate(event.value);
+        if (baseY === null || baseY === undefined) return;
+
+        const boundaryEvents = swings
+          .filter(s =>
+            s.type === swingType
+            && s.time > event.time
+            && s.time < segmentEnd
+            && (isIsl ? s.price > event.value : s.price < event.value)
+          )
+          .sort((a, b) => a.time - b.time);
+
+        boundaryEvents.forEach((boundary, boundaryIndex) => {
+          const fromTime = boundary.time;
+          const toTime = boundaryEvents[boundaryIndex + 1]?.time || segmentEnd;
+          const x1 = chart.timeScale().timeToCoordinate(fromTime);
+          const x2 = chart.timeScale().timeToCoordinate(toTime);
+          const boundaryY = candleSeries.priceToCoordinate(boundary.price);
+          if ([x1, x2, boundaryY].some(v => v === null || v === undefined)) return;
+
+          const left = Math.max(0, Math.min(width, Math.min(x1, x2)));
+          const right = Math.max(0, Math.min(width, Math.max(x1, x2)));
+          const top = Math.max(0, Math.min(height, Math.min(baseY, boundaryY)));
+          const bottom = Math.max(0, Math.min(height, Math.max(baseY, boundaryY)));
+          if (right - left < 2 || bottom - top < 2) return;
+
+          ctx.fillRect(left, top, right - left, bottom - top);
+          ctx.beginPath();
+          ctx.moveTo(left, boundaryY);
+          ctx.lineTo(right, boundaryY);
+          ctx.stroke();
+        });
+      });
+    }
+
+    function updateRollingOverlays() {
+      state.rollingOverlays.forEach(overlay => {
+        if (overlay.type === 'poolCanvas') {
+          drawRollingPoolCanvas(overlay);
+          return;
+        }
+
+        if (overlay.type === 'pool') {
+          const x1 = chart.timeScale().timeToCoordinate(overlay.startTime);
+          const x2 = chart.timeScale().timeToCoordinate(overlay.endTime);
+          const yUpper = candleSeries.priceToCoordinate(overlay.upper);
+          const yLower = candleSeries.priceToCoordinate(overlay.lower);
+
+          if ([x1, x2, yUpper, yLower].some(v => v === null || v === undefined)) {
+            overlay.el.style.display = 'none';
+            return;
+          }
+
+          const width = chartEl.clientWidth;
+          const height = chartEl.clientHeight;
+          const rawLeft = Math.min(x1, x2);
+          const rawRight = Math.max(x1, x2);
+          const rawTop = Math.min(yUpper, yLower);
+          const rawBottom = Math.max(yUpper, yLower);
+          const left = Math.max(0, Math.min(width, rawLeft));
+          const right = Math.max(0, Math.min(width, rawRight));
+          const top = Math.max(0, Math.min(height, rawTop));
+          const bottom = Math.max(0, Math.min(height, rawBottom));
+
+          if (right - left < 2 || bottom - top < 2) {
+            overlay.el.style.display = 'none';
+            return;
+          }
+
+          overlay.el.style.display = 'block';
+          overlay.el.style.left = `${left}px`;
+          overlay.el.style.top = `${top}px`;
+          overlay.el.style.width = `${right - left}px`;
+          overlay.el.style.height = `${bottom - top}px`;
+          return;
+        }
+
+        const x = chart.timeScale().timeToCoordinate(overlay.time);
+        const y1 = candleSeries.priceToCoordinate(overlay.fromPrice);
+        const y2 = candleSeries.priceToCoordinate(overlay.toPrice);
+        if ([x, y1, y2].some(v => v === null || v === undefined)) {
+          overlay.el.style.display = 'none';
+          return;
+        }
+
+        const top = Math.max(0, Math.min(chartEl.clientHeight, Math.min(y1, y2)));
+        const bottom = Math.max(0, Math.min(chartEl.clientHeight, Math.max(y1, y2)));
+        if (x < 0 || x > chartEl.clientWidth || bottom - top < 2) {
+          overlay.el.style.display = 'none';
+          return;
+        }
+
+        overlay.el.style.display = 'block';
+        overlay.el.style.left = `${x}px`;
+        overlay.el.style.top = `${top}px`;
+        overlay.el.style.height = `${bottom - top}px`;
+      });
+    }
+
+    function updateLevelLabels() {
+      state.levelLabels.forEach(label => {
+        const x = chart.timeScale().timeToCoordinate(label.endTime);
+        const y = candleSeries.priceToCoordinate(label.price);
+        if (x === null || x === undefined || y === null || y === undefined) {
+          label.el.style.display = 'none';
+          return;
+        }
+
+        const labelWidth = label.el.offsetWidth || 28;
+        const left = x - labelWidth - 5;
+        const top = y - 3;
+        if (left < 0 || left + labelWidth > chartEl.clientWidth || top < 12 || top > chartEl.clientHeight) {
+          label.el.style.display = 'none';
+          return;
+        }
+        label.el.style.display = 'block';
+        label.el.style.left = `${left}px`;
+        label.el.style.top = `${top}px`;
+      });
+    }
+
+    function updateOverlays() {
+      updateFvgZones();
+      updateRollingOverlays();
+      updateLevelLabels();
+    }
+
+    function addLevelSegment(sourceName, displayLabel, startTime, endTime, price, color) {
+      if (!startTime || price === null || price === undefined || Number.isNaN(price)) return;
+      if (!endTime) return;
+      if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
+      if (!priceFitsCurrentTicker(price)) return;
+      if (!levelMatchesStartCandle(sourceName, startTime, price)) return;
+      if (endTime < startTime) endTime = candleTimeAfter(startTime, 2);
+      if (candleIndexAtOrAfter(startTime) < 0 || candleIndexAtOrAfter(endTime) < 0) return;
+      const series = chart.addLineSeries({
+        color,
+        lineWidth: 1,
+        lineStyle: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      series.setData([
+        { time: startTime, value: price },
+        { time: endTime, value: price },
+      ]);
+      state.levelSeries.push(series);
+      addLevelLabel(displayLabel, endTime, price, color);
+    }
+
+    function renderAllSignalLevels(item) {
+      clearLevelSeries();
+      const levelsToDraw = [
+        ['T3 Low', 'L', '#ef5350'],
+        ['T2 High', 'H', '#2962ff'],
+        ['Current ISL', 'ISL', '#f9a825'],
+        ['Base ISL', 'ISLB', '#ffb74d'],
+        ['Base ISH', 'BSL', '#26a69a'],
+      ];
+
+      item.signals.forEach(signal => {
+        const levels = signal.levels || {};
+        const times = signal.level_times || deriveLevelTimesFromSwings(signal);
+        const derivedTimes = deriveLevelTimesFromSwings(signal);
+        if (derivedTimes['Current ISL']) {
+          times['Current ISL'] = derivedTimes['Current ISL'];
+        }
+        if (derivedTimes['Base ISL']) {
+          times['Base ISL'] = derivedTimes['Base ISL'];
+        }
+        const sellside = deriveSellsideLiquidityFromSwings(signal, times);
+        delete levels['Current ISL'];
+        delete times['Current ISL'];
+        delete levels['Base ISL'];
+        delete times['Base ISL'];
+        if (sellside.current) {
+          levels['Current ISL'] = sellside.current.price;
+          times['Current ISL'] = sellside.current.time;
+        }
+        if (sellside.base) {
+          levels['Base ISL'] = sellside.base.price;
+          times['Base ISL'] = sellside.base.time;
+        }
+        signal.metrics = signal.metrics || {};
+        signal.metrics.protected_lows = sellside.active.filter(level => level.swept).length;
+        signal.metrics.current_isl = sellside.current ? sellside.current.price : null;
+        signal.metrics.base_isl = sellside.base ? sellside.base.price : null;
+        signal.metrics.low_count_mode = 'isl_price_levels';
+        const targetIsh = resolveTargetIsh(signal);
+        delete levels['Base ISH'];
+        delete times['Base ISH'];
+        signal.metrics = signal.metrics || {};
+        signal.metrics.base_ish = null;
+        signal.metrics.target_highs = 0;
+        if (targetIsh) {
+          levels['Base ISH'] = targetIsh.price;
+          times['Base ISH'] = targetIsh.time;
+          signal.metrics.base_ish = targetIsh.price;
+          signal.metrics.target_highs = Math.max(signal.metrics.target_highs || 0, 1);
+        }
+        const bullFvg = deriveBullFvgRetest(signal, times);
+        if (bullFvg) {
+          signal.metrics = { ...(signal.metrics || {}), ...bullFvg };
+          levels['Bull FVG Lower'] = bullFvg.bull_fvg_lower;
+          levels['Bull FVG Upper'] = bullFvg.bull_fvg_upper;
+          times['Bull FVG'] = bullFvg.bull_fvg_time;
+        }
+        const t3Start = times['T3 Low'];
+        if (!t3Start) return;
+        const commonEnd = candleTimeAfter(t3Start, 14);
+
+        levelsToDraw.forEach(([name, label, color]) => {
+          const price = levels[name];
+          const startTime = times[name];
+          addLevelSegment(name, label, startTime, commonEnd, price, color);
+        });
+
+        if (signal.metrics?.bull_fvg_retest) {
+          addFvgZone(times['Bull FVG'], commonEnd, levels['Bull FVG Lower'], levels['Bull FVG Upper']);
+        }
+      });
+      requestAnimationFrame(updateOverlays);
+      setTimeout(updateOverlays, 80);
+    }
+
+    function renderSelectedSignal() {
+      metricsEl.innerHTML = '';
+      if (!state.signal) {
+        signalSummary.textContent = 'No signal selected';
+        renderProbabilityMeter(null);
+        addMetric('Ticker', state.ticker ? state.ticker.ticker : 'n/a');
+        return;
+      }
+
+      const s = state.signal;
+      const levels = s.levels || {};
+      const times = s.level_times || deriveLevelTimesFromSwings(s);
+      const derivedTimes = deriveLevelTimesFromSwings(s);
+      if (derivedTimes['Current ISL']) {
+        times['Current ISL'] = derivedTimes['Current ISL'];
+      }
+      if (derivedTimes['Base ISL']) {
+        times['Base ISL'] = derivedTimes['Base ISL'];
+      }
+      const sellside = deriveSellsideLiquidityFromSwings(s, times);
+      delete levels['Current ISL'];
+      delete times['Current ISL'];
+      delete levels['Base ISL'];
+      delete times['Base ISL'];
+      if (sellside.current) {
+        levels['Current ISL'] = sellside.current.price;
+        times['Current ISL'] = sellside.current.time;
+      }
+      if (sellside.base) {
+        levels['Base ISL'] = sellside.base.price;
+        times['Base ISL'] = sellside.base.time;
+      }
+      const targetIsh = resolveTargetIsh(s);
+      delete levels['Base ISH'];
+      delete times['Base ISH'];
+      s.metrics = s.metrics || {};
+      s.metrics.protected_lows = sellside.active.filter(level => level.swept).length;
+      s.metrics.current_isl = sellside.current ? sellside.current.price : null;
+      s.metrics.base_isl = sellside.base ? sellside.base.price : null;
+      s.metrics.current_isl_swept = Boolean(sellside.current?.swept);
+      s.metrics.low_count_mode = 'isl_price_levels';
+      s.metrics.base_ish = null;
+      s.metrics.target_highs = 0;
+      if (targetIsh) {
+        levels['Base ISH'] = targetIsh.price;
+        times['Base ISH'] = targetIsh.time;
+        s.metrics.base_ish = targetIsh.price;
+        s.metrics.target_highs = Math.max(s.metrics.target_highs || 0, 1);
+      }
+      const bullFvg = deriveBullFvgRetest(s, times);
+      if (bullFvg) {
+        s.metrics = { ...(s.metrics || {}), ...bullFvg };
+        levels['Bull FVG Lower'] = bullFvg.bull_fvg_lower;
+        levels['Bull FVG Upper'] = bullFvg.bull_fvg_upper;
+      }
+      const m = s.metrics || {};
+      signalSummary.textContent = formatIstTimestamp(s.time);
+      renderProbabilityMeter(s);
+      const probability = signalProbability(s);
+      addMetric('Success Probability', `${Math.round(probability.probability * 100)}% ${probability.stage}`);
+      addMetric('Score', fmt(s.score, 4));
+      addMetric('Ratio', fmt(s.ratio, 3));
+      addMetric('ATR Ratio', fmt(s.atr_ratio, 3));
+      addMetric('FVG / ATR', fmt(s.fvg_atr, 3));
+      addMetric('Sweep Into Bull FVG', fmt(m.bull_fvg_retest));
+      addMetric('Bull FVG Fill', fmt(m.bull_fvg_fill, 2));
+      addMetric('Active Bull FVGs', fmt(m.active_bull_fvgs, 0));
+      addMetric('Bull FVG Age', fmt(m.bull_fvg_age, 0));
+      addMetric('Swept Lows', fmt(m.protected_lows, 0));
+      addMetric('Low Count Mode', fmt(m.low_count_mode));
+      addMetric('Current ISL', fmt(levels['Current ISL']));
+      addMetric('Base ISL', fmt(m.base_isl));
+      addMetric('Low Touches', fmt(m.low_touches, 0));
+      addMetric('Low Clusters', fmt(m.low_clusters, 0));
+      addMetric('Deeper ISL Pending', fmt(m.deeper_isl_pending));
+      addMetric('Deeper ISL ATR', fmt(m.deeper_isl_atr, 2));
+      addMetric('Target Highs', fmt(m.target_highs, 0));
+      addMetric('Base ISH', fmt(m.base_ish));
+      addMetric('Target ATR', fmt(m.target_distance_atr, 2));
+      addMetric('Target Clusters', fmt(m.target_clusters, 0));
+    }
+
+    function focusSignal(signal) {
+      const idx = state.ticker.candles.findIndex(c => c.time === signal.time);
+      if (idx < 0) return;
+      const from = state.ticker.candles[Math.max(0, idx - 80)].time;
+      const to = state.ticker.candles[Math.min(state.ticker.candles.length - 1, idx + 40)].time;
+      candleSeries.priceScale().applyOptions({ autoScale: true });
+      chart.timeScale().setVisibleRange({ from, to });
+      requestAnimationFrame(updateOverlays);
+    }
+
+    document.getElementById('fitBtn').onclick = () => {
+      candleSeries.priceScale().applyOptions({ autoScale: true });
+      chart.timeScale().fitContent();
+      requestAnimationFrame(updateOverlays);
+    };
+    document.getElementById('lastSignalBtn').onclick = () => {
+      if (state.ticker?.signals.length) {
+        state.signal = state.ticker.signals.at(-1);
+        renderSignals();
+        renderSelectedSignal();
+        focusSignal(state.signal);
+      }
+    };
+    document.getElementById('rollingLevelsBtn').onclick = () => {
+      state.rollingVisible = !state.rollingVisible;
+      document.getElementById('rollingLevelsBtn').classList.toggle('active', state.rollingVisible);
+      renderRollingLevels();
+      requestAnimationFrame(updateOverlays);
+    };
+    document.getElementById('leftPanelBtn').onclick = () => {
+      app.classList.toggle('left-collapsed');
+      requestAnimationFrame(() => {
+        chart.applyOptions({ width: Math.max(chartEl.clientWidth, 600), height: Math.max(chartEl.clientHeight, 320) });
+        updateOverlays();
+      });
+    };
+    document.getElementById('rightPanelBtn').onclick = () => {
+      app.classList.toggle('right-collapsed');
+      requestAnimationFrame(() => {
+        chart.applyOptions({ width: Math.max(chartEl.clientWidth, 600), height: Math.max(chartEl.clientHeight, 320) });
+        updateOverlays();
+      });
+    };
+    search.oninput = renderWatchlist;
+
+    renderWatchlist();
+    selectTicker(tickers.find(t => t.signals.length > 0) || tickers[0] || { ticker: 'No data', candles: [], signals: [] });
+  </script>
+</body>
+</html>
