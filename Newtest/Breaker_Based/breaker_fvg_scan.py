@@ -6,14 +6,20 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
+import os
 
 # ── Config ────────────────────────────────────────────────────────────────────
 Ticker_df    = pd.read_csv('NSE_Symbols.csv')
 tickers_list = Ticker_df['Symbol'].tolist()
 
 def telegram_alert(message):
-    url = 'https://api.telegram.org/bot8520982329:AAGr_PfQPzUFI2zQDWJ41TAtmCobla2JcZY/sendMessage'
-    requests.post(url, data={'chat_id': '-5245957606', 'text': message})
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        print("Telegram alert skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set.")
+        return
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": message}, timeout=10)
 
 position     = -2
 ATR_BASELINE = 14   # candles before T2 used as volatility baseline (configurable)
