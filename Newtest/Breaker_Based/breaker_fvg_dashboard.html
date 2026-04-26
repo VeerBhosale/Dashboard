@@ -244,6 +244,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      min-width: 0;
     }
 
     button {
@@ -448,9 +449,113 @@
       padding: 12px 2px;
     }
 
-    @media (max-width: 1100px) {
+    @media (min-width: 761px) and (max-width: 1100px) {
       .app { grid-template-columns: 240px minmax(0, 1fr); }
       .details { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      body {
+        height: 100dvh;
+      }
+
+      .app,
+      .app.left-collapsed,
+      .app.right-collapsed,
+      .app.left-collapsed.right-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+        height: 100dvh;
+      }
+
+      aside,
+      .details {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        z-index: 20;
+        width: min(88vw, 340px);
+        height: 100dvh;
+        border-color: var(--line);
+        visibility: visible;
+        transition: transform 160ms ease;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      }
+
+      aside {
+        left: 0;
+        border-right: 1px solid var(--line);
+        transform: translateX(0);
+      }
+
+      .details {
+        right: 0;
+        display: flex;
+        border-left: 1px solid var(--line);
+        transform: translateX(0);
+      }
+
+      .app.left-collapsed aside {
+        border-right: 1px solid var(--line);
+        transform: translateX(-104%);
+        visibility: visible;
+      }
+
+      .app.right-collapsed .details {
+        border-left: 1px solid var(--line);
+        transform: translateX(104%);
+        visibility: visible;
+      }
+
+      .chart-shell {
+        height: 100dvh;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .topbar {
+        height: auto;
+        min-height: 56px;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px;
+      }
+
+      .chart-shell > .topbar {
+        flex-direction: column;
+      }
+
+      h1 {
+        font-size: 15px;
+      }
+
+      .toolbar {
+        width: 100%;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      button {
+        min-height: 34px;
+        padding: 7px 9px;
+        flex: 0 0 auto;
+      }
+
+      .icon-btn {
+        width: 34px;
+        height: 34px;
+      }
+
+      #chart {
+        min-height: 0;
+      }
+
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .level-label {
+        font-size: 10px;
+      }
     }
   </style>
 </head>
@@ -531,6 +636,19 @@
     const metricsEl = document.getElementById('metrics');
     const probabilityMeterEl = document.getElementById('probabilityMeter');
     const signalSummary = document.getElementById('signalSummary');
+    const mobileQuery = window.matchMedia('(max-width: 760px)');
+
+    function chartSize() {
+      const minHeight = mobileQuery.matches ? 360 : 320;
+      return {
+        width: Math.max(1, Math.floor(chartEl.clientWidth)),
+        height: Math.max(minHeight, Math.floor(chartEl.clientHeight)),
+      };
+    }
+
+    if (mobileQuery.matches) {
+      app.classList.add('left-collapsed', 'right-collapsed');
+    }
 
     const istDateTime = new Intl.DateTimeFormat('en-IN', {
       timeZone: 'Asia/Kolkata',
@@ -579,8 +697,8 @@
     }
 
     const chart = LightweightCharts.createChart(chartEl, {
-      width: Math.max(chartEl.clientWidth, 600),
-      height: Math.max(chartEl.clientHeight, 320),
+      width: chartSize().width,
+      height: chartSize().height,
       layout: { background: { color: '#0b0e11' }, textColor: '#cfd8dc' },
       grid: { vertLines: { color: '#1b222b' }, horzLines: { color: '#1b222b' } },
       rightPriceScale: { borderColor: '#242c36', textColor: '#cfd8dc' },
@@ -605,10 +723,7 @@
     });
 
     new ResizeObserver(() => {
-      chart.applyOptions({
-        width: Math.max(chartEl.clientWidth, 600),
-        height: Math.max(chartEl.clientHeight, 320),
-      });
+      chart.applyOptions(chartSize());
       updateOverlays();
     }).observe(chartEl);
     chart.timeScale().subscribeVisibleTimeRangeChange(updateOverlays);
@@ -629,7 +744,10 @@
         const row = document.createElement('div');
         row.className = `ticker-row${state.ticker?.ticker === item.ticker ? ' active' : ''}`;
         row.innerHTML = `<div><div class="symbol">${item.ticker}</div><div class="sub">${item.candles.length} candles</div></div><div class="badge">${item.signals.length}</div>`;
-        row.onclick = () => selectTicker(item);
+        row.onclick = () => {
+          selectTicker(item);
+          if (mobileQuery.matches) app.classList.add('left-collapsed');
+        };
         watchlist.appendChild(row);
       });
     }
@@ -1545,17 +1663,28 @@
     document.getElementById('leftPanelBtn').onclick = () => {
       app.classList.toggle('left-collapsed');
       requestAnimationFrame(() => {
-        chart.applyOptions({ width: Math.max(chartEl.clientWidth, 600), height: Math.max(chartEl.clientHeight, 320) });
+        chart.applyOptions(chartSize());
         updateOverlays();
       });
     };
     document.getElementById('rightPanelBtn').onclick = () => {
       app.classList.toggle('right-collapsed');
       requestAnimationFrame(() => {
-        chart.applyOptions({ width: Math.max(chartEl.clientWidth, 600), height: Math.max(chartEl.clientHeight, 320) });
+        chart.applyOptions(chartSize());
         updateOverlays();
       });
     };
+    mobileQuery.addEventListener('change', event => {
+      if (event.matches) {
+        app.classList.add('left-collapsed', 'right-collapsed');
+      } else {
+        app.classList.remove('left-collapsed', 'right-collapsed');
+      }
+      requestAnimationFrame(() => {
+        chart.applyOptions(chartSize());
+        updateOverlays();
+      });
+    });
     search.oninput = renderWatchlist;
 
     renderWatchlist();
