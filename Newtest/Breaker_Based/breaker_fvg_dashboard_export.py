@@ -23,6 +23,7 @@ INTERVAL = "1h"
 ATR_BASELINE = 14
 LIQ_ISL_MAX_ATR_DISTANCE = 3.0
 LIQ_BREACH_TOLERANCE_ATR = 0.05
+FVG_CONFIRM_AFTER_SIGNAL_CANDLES = 1
 
 
 def mean_atr(df):
@@ -410,9 +411,12 @@ def analyze_ticker(ticker, raw_data, multi_index):
         t2_ts = swings.index[pos - 2]
         t1_ts = swings.index[pos - 1]
 
+        idx_iloc = btc.index.get_loc(idx)
+        fvg_end_ts = btc.index[min(idx_iloc + FVG_CONFIRM_AFTER_SIGNAL_CANDLES, len(btc.index) - 1)]
+
         cands = fvg_overlap[
             (fvg_overlap.index >= t2_ts)
-            & (fvg_overlap.index <= idx)
+            & (fvg_overlap.index <= fvg_end_ts)
             & (fvg_overlap["Bear_FVG_ts"] >= t2_ts)
         ]
         if cands.empty:
@@ -556,9 +560,10 @@ def main():
 
     payload = {
         "generated_at": pd.Timestamp.now(tz="Asia/Kolkata").isoformat(),
-        "schema_version": 2,
+        "schema_version": 3,
         "period_days": args.period_days,
         "interval": args.interval,
+        "fvg_confirm_after_signal_candles": FVG_CONFIRM_AFTER_SIGNAL_CANDLES,
         "tickers": [],
     }
 
