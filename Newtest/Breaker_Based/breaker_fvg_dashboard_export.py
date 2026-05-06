@@ -92,6 +92,137 @@ def rolling_context_levels(btc, isl_prices, ish_prices):
     }
 
 
+def rolling_ranges(btc, isl_prices, ish_prices):
+    events = []
+    for ts, price in isl_prices.dropna().items():
+        events.append({"time": ts, "type": "isl", "price": float(price)})
+    for ts, price in ish_prices.dropna().items():
+        events.append({"time": ts, "type": "ish", "price": float(price)})
+    events.sort(key=lambda event: event["time"])
+
+    latest_isl = None
+    latest_ish = None
+    active = None
+    ranges = []
+
+    def close_active(end_ts, break_side=None):
+        nonlocal active
+        if not active:
+            return
+        if end_ts <= active["start_time"]:
+            active = None
+            return
+        active["end_time"] = end_ts
+        active["break_side"] = break_side
+        active["duration"] = btc.index.get_loc(end_ts) - btc.index.get_loc(active["start_time"])
+        active["width"] = active["upper"] - active["lower"]
+        ranges.append(active)
+        active = None
+
+    for event in events:
+        ts = event["time"]
+        price = event["price"]
+
+        if active:
+            if event["type"] == "ish" and price > active["upper"]:
+                close_active(ts, "up")
+            elif event["type"] == "isl" and price < active["lower"]:
+                close_active(ts, "down")
+            else:
+                if event["type"] == "ish":
+                    active["internal_ish_count"] += 1
+                else:
+                    active["internal_isl_count"] += 1
+
+        if event["type"] == "isl":
+            latest_isl = event
+        else:
+            latest_ish = event
+
+        if active is None and latest_isl and latest_ish and latest_isl["price"] < latest_ish["price"]:
+            active = {
+                "start_time": max(latest_isl["time"], latest_ish["time"]),
+                "end_time": btc.index[-1],
+                "lower": latest_isl["price"],
+                "upper": latest_ish["price"],
+                "lower_time": latest_isl["time"],
+                "upper_time": latest_ish["time"],
+                "internal_isl_count": 0,
+                "internal_ish_count": 0,
+                "break_side": None,
+            }
+
+    if active:
+        close_active(btc.index[-1], None)
+
+    output = []
+    for item in ranges:
+        width = item["upper"] - item["lower"]
+        if width <= 0:
+            continue
+        start_loc = btc.index.get_loc(item["start_time"])
+        end_loc = btc.index.get_loc(item["end_time"])
+        atr_start = max(0, start_loc - ATR_BASELINE + 1)
+        atr = mean_atr(btc.iloc[atr_start : start_loc + 1]) if start_loc >= 0 else 0.0
+        width_atr = round(width / atr, 3) if atr and atr > 0 else None
+        duration = max(end_loc - start_loc, 0)
+        compression = 0.0 if width_atr is None else max(0.0, 1.0 - min(width_atr / 4.0, 1.0))
+        age_score = min(duration / 20.0, 1.0)
+        internal_score = min((item["internal_isl_count"] + item["internal_ish_count"]) / 6.0, 1.0)
+        quality = round(100.0 * (0.40 * age_score + 0.40 * compression + 0.20 * internal_score), 1)
+        output.append(
+            {
+                "start_time": unix_time(item["start_time"]),
+                "end_time": unix_time(item["end_time"]),
+                "lower": as_float(item["lower"]),
+                "upper": as_float(item["upper"]),
+                "lower_time": unix_time(item["lower_time"]),
+                "upper_time": unix_time(item["upper_time"]),
+                "duration": duration,
+                "width": round(width, 4),
+                "width_atr": width_atr,
+                "internal_isl_count": item["internal_isl_count"],
+                "internal_ish_count": item["internal_ish_count"],
+                "quality": quality,
+                "break_side": item["break_side"],
+            }
+        )
+    return output
+
+
+def range_context_for_signal(ranges, signal_ts):
+    prior = [
+        item for item in ranges
+        if item["start_time"] <= unix_time(signal_ts) <= item["end_time"]
+    ]
+    if not prior:
+        prior = [item for item in ranges if item["end_time"] <= unix_time(signal_ts)]
+    if not prior:
+        return {
+            "range_active": False,
+            "range_quality": None,
+            "range_age": 0,
+            "range_width_atr": None,
+            "range_internal_isl": 0,
+            "range_internal_ish": 0,
+            "range_break_side": None,
+            "range_lower": None,
+            "range_upper": None,
+        }
+    item = prior[-1]
+    return {
+        "range_active": bool(item["start_time"] <= unix_time(signal_ts) <= item["end_time"] and item["break_side"] is None),
+        "range_quality": item["quality"],
+        "range_age": item["duration"],
+        "range_width_atr": item["width_atr"],
+        "range_internal_isl": item["internal_isl_count"],
+        "range_internal_ish": item["internal_ish_count"],
+        "range_break_side": item["break_side"],
+        "range_lower": item["lower"],
+        "range_upper": item["upper"],
+    }
+
+
 def accumulated_liquidity(btc, isl_prices, t3_ts, t1_ts, t3_low, t1_low, atr_baseline):
     tolerance = atr_baseline * LIQ_BREACH_TOLERANCE_ATR if atr_baseline > 0 else 0.0
     active_lows = active_isls(btc, isl_prices, t3_ts, t1_ts, t3_low, t1_low, tolerance, atr_baseline)
@@ -401,6 +532,7 @@ def analyze_ticker(ticker, raw_data, multi_index):
         default="NA",
     )
     fvg_overlap = fvg.loc[fvg["FVG_Overlap"] == "FVG_Overlap", ["Bear_FVG_ts"]]
+    ranges = rolling_ranges(btc, isl_prices, ish_prices)
 
     signals = []
     for idx in swings.index[swings["Breaker_Signal"]]:
@@ -460,6 +592,7 @@ def analyze_ticker(ticker, raw_data, multi_index):
         metrics.update(unresolved_deeper_isl(btc, t3_ts, t1_low, atr_baseline))
         metrics.update(target_liquidity(btc, swings, idx, idx_high, atr_baseline))
         metrics.update(bullish_fvg_sweep_retest(btc, t1_ts, t1_low))
+        metrics.update(range_context_for_signal(ranges, t1_ts))
         isl_level = metrics.get("current_isl")
         isl_time = metrics.get("current_isl_time")
         isl_sweep = bool(metrics.get("current_isl_swept"))
@@ -532,6 +665,7 @@ def analyze_ticker(ticker, raw_data, multi_index):
         "signals": signals,
         "swings": swing_marks,
         "rolling_levels": rolling_levels,
+        "ranges": ranges,
     }
 
 

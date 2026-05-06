@@ -242,6 +242,13 @@
       pointer-events: none;
     }
 
+    .range-zone-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
     .rolling-connector {
       position: absolute;
       z-index: 2;
@@ -701,6 +708,7 @@
         </div>
         <div class="toolbar">
           <button id="rollingLevelsBtn" title="Toggle rolling ISL/ISH context">ISL/ISH</button>
+          <button id="rangesBtn" title="Toggle liquidity ranges">Ranges</button>
           <button id="fitBtn">Fit</button>
           <button id="lastSignalBtn">Last signal</button>
         </div>
@@ -780,6 +788,8 @@
       rollingVisible: false,
       rollingSeries: [],
       rollingOverlays: [],
+      rangesVisible: false,
+      rangeOverlays: [],
       overlayFrame: null,
       overlayLoopUntil: 0,
     };
@@ -951,9 +961,11 @@
       chartSubtitle.textContent = `${item.signals.length} Breaker+FVG signals`;
       try {
         clearRollingLevels();
+        clearRanges();
         candleSeries.setData(item.candles);
         candleSeries.setMarkers(item.signals.map(markerForSignal));
         if (state.rollingVisible) renderRollingLevels();
+        if (state.rangesVisible) renderRanges();
         renderAllSignalLevels(item);
         chartError.style.display = 'none';
       } catch (err) {
@@ -1076,6 +1088,11 @@
       state.rollingSeries = [];
       state.rollingOverlays.forEach(overlay => overlay.el.remove());
       state.rollingOverlays = [];
+    }
+
+    function clearRanges() {
+      state.rangeOverlays.forEach(overlay => overlay.el.remove());
+      state.rangeOverlays = [];
     }
 
     function candleTimeAfter(startTime, bars = 14) {
@@ -1356,6 +1373,23 @@
       requestAnimationFrame(updateOverlays);
     }
 
+    function addRangeCanvas(range) {
+      const el = document.createElement('canvas');
+      el.className = 'range-zone-canvas';
+      chartEl.appendChild(el);
+      state.rangeOverlays.push({ el, range });
+    }
+
+    function renderRanges() {
+      clearRanges();
+      if (!state.ticker || !state.rangesVisible) return;
+      (state.ticker.ranges || []).forEach(range => {
+        if (!range.start_time || !range.end_time || range.lower === null || range.upper === null) return;
+        addRangeCanvas(range);
+      });
+      requestAnimationFrame(updateOverlays);
+    }
+
     function deriveBullFvgRetest(signal, times) {
       const candles = state.ticker?.candles || [];
       const t1Time = times['T1 Sweep Low'];
@@ -1474,6 +1508,62 @@
 
     function updateFvgZones() {
       state.fvgZones.forEach(zone => zone._update && zone._update());
+    }
+
+    function drawRangeCanvas(overlay) {
+      const canvas = overlay.el;
+      const range = overlay.range;
+      const width = chartEl.clientWidth;
+      const height = chartEl.clientHeight;
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      }
+
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      const x1 = chart.timeScale().timeToCoordinate(range.start_time);
+      const x2 = chart.timeScale().timeToCoordinate(range.end_time);
+      const yUpper = candleSeries.priceToCoordinate(range.upper);
+      const yLower = candleSeries.priceToCoordinate(range.lower);
+      if ([x1, x2, yUpper, yLower].some(v => v === null || v === undefined)) return;
+
+      const left = Math.max(0, Math.min(width, Math.min(x1, x2)));
+      const right = Math.max(0, Math.min(width, Math.max(x1, x2)));
+      const top = Math.max(0, Math.min(height, Math.min(yUpper, yLower)));
+      const bottom = Math.max(0, Math.min(height, Math.max(yUpper, yLower)));
+      if (right - left < 2 || bottom - top < 2) return;
+
+      const quality = Number(range.quality || 0);
+      const alpha = Math.max(0.05, Math.min(0.18, 0.05 + quality / 1000));
+      ctx.fillStyle = `rgba(41, 98, 255, ${alpha})`;
+      ctx.strokeStyle = 'rgba(41, 98, 255, 0.38)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+      ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = 'rgba(239, 83, 80, 0.58)';
+      ctx.beginPath();
+      ctx.moveTo(left, yUpper);
+      ctx.lineTo(right, yUpper);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(38, 166, 154, 0.58)';
+      ctx.beginPath();
+      ctx.moveTo(left, yLower);
+      ctx.lineTo(right, yLower);
+      ctx.stroke();
+    }
+
+    function updateRangeOverlays() {
+      state.rangeOverlays.forEach(drawRangeCanvas);
     }
 
     function drawRollingPoolCanvas(overlay) {
@@ -1605,6 +1695,7 @@
     function updateOverlays() {
       updateFvgZones();
       updateRollingOverlays();
+      updateRangeOverlays();
     }
 
     function scheduleOverlayUpdate() {
@@ -1814,6 +1905,11 @@
       addMetric('Base ISH', fmt(m.base_ish));
       addMetric('Target ATR', fmt(m.target_distance_atr, 2));
       addMetric('Target Clusters', fmt(m.target_clusters, 0));
+      addMetric('Range Quality', fmt(m.range_quality, 1));
+      addMetric('Range Active', fmt(m.range_active));
+      addMetric('Range Age', fmt(m.range_age, 0));
+      addMetric('Range Width ATR', fmt(m.range_width_atr, 2));
+      addMetric('Range Internal L/H', `${fmt(m.range_internal_isl, 0)} / ${fmt(m.range_internal_ish, 0)}`);
     }
 
     function focusSignal(signal) {
@@ -1843,6 +1939,12 @@
       state.rollingVisible = !state.rollingVisible;
       document.getElementById('rollingLevelsBtn').classList.toggle('active', state.rollingVisible);
       renderRollingLevels();
+      requestAnimationFrame(updateOverlays);
+    };
+    document.getElementById('rangesBtn').onclick = () => {
+      state.rangesVisible = !state.rangesVisible;
+      document.getElementById('rangesBtn').classList.toggle('active', state.rangesVisible);
+      renderRanges();
       requestAnimationFrame(updateOverlays);
     };
     document.getElementById('leftPanelBtn').onclick = () => {
