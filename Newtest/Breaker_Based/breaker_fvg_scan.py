@@ -9,7 +9,9 @@ from that exact payload.
 import json
 import math
 import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -20,6 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "breaker_fvg_dashboard_data.js"
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://veerbhosale.github.io/Dashboard/")
 ALERT_POSITION = -2
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def telegram_alert(message):
@@ -92,6 +95,16 @@ def signal_probability(signal):
     return probability, stage
 
 
+def format_ist_time(unix_time):
+    if unix_time is None:
+        return "time n/a"
+    try:
+        dt = datetime.fromtimestamp(int(unix_time), tz=IST)
+    except (TypeError, ValueError, OSError):
+        return "time n/a"
+    return dt.strftime("%d-%b %H:%M IST")
+
+
 def format_signal_line(rank, ticker, signal):
     probability, stage = signal_probability(signal)
     score = signal.get("score")
@@ -106,6 +119,15 @@ def target_time_for_ticker(item):
     if len(candles) < abs(ALERT_POSITION):
         return None
     return candles[ALERT_POSITION].get("time")
+
+
+def target_time_for_payload(payload):
+    times = [
+        target_time_for_ticker(item)
+        for item in payload.get("tickers", [])
+        if target_time_for_ticker(item)
+    ]
+    return max(times) if times else None
 
 
 def latest_signal_alerts(payload):
@@ -132,11 +154,12 @@ def latest_signal_alerts(payload):
 
 def build_message(payload):
     alerts = latest_signal_alerts(payload)
+    scan_time = format_ist_time(target_time_for_payload(payload))
     if alerts:
         lines = [format_signal_line(rank, item["ticker"], item["signal"]) for rank, item in enumerate(alerts, start=1)]
-        return "Breaker+FVG signals\n\n" + "\n".join(lines) + f"\n\nDashboard: {DASHBOARD_URL}"
+        return f"Breaker+FVG signals\nCandle: {scan_time}\n\n" + "\n".join(lines) + f"\n\nDashboard: {DASHBOARD_URL}"
 
-    return f"Breaker+FVG Scanner ran - no signals.\n\nDashboard: {DASHBOARD_URL}"
+    return f"Breaker+FVG Scanner ran - no signals.\nCandle: {scan_time}\n\nDashboard: {DASHBOARD_URL}"
 
 
 def main():
