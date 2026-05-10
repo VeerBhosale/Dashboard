@@ -239,7 +239,7 @@ def load_existing_rows(path=RESEARCH_LOG):
 def write_rows(rows, path=RESEARCH_LOG):
     ordered = sorted(
         rows.values(),
-        key=lambda row: (row.get("first_signal_time") or "0", row.get("ticker") or ""),
+        key=lambda row: (as_int(row.get("first_signal_time")) or 0, row.get("ticker") or ""),
     )
     with Path(path).open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
@@ -248,7 +248,14 @@ def write_rows(rows, path=RESEARCH_LOG):
 
 
 def write_timeseries_rows(rows, path=TIMESERIES_LOG):
-    rows = sorted(rows, key=lambda row: (row["ticker"], row["trade_idea_id"], row["candle_time"]))
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            row.get("ticker") or "",
+            row.get("trade_idea_id") or "",
+            as_int(row.get("candle_time")) or 0,
+        ),
+    )
     with Path(path).open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=TIMESERIES_FIELDNAMES)
         writer.writeheader()
