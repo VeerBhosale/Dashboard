@@ -13,6 +13,8 @@ from pathlib import Path
 
 import requests
 
+from breaker_fvg_research import update_research_log
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "breaker_fvg_dashboard_data.js"
@@ -31,7 +33,7 @@ def telegram_alert(message):
         response = requests.post(url, data={"chat_id": chat_id, "text": message}, timeout=10)
         response.raise_for_status()
     except requests.RequestException as exc:
-        print(f"Telegram alert failed: {exc}")
+        print(f"Telegram alert failed: {exc.__class__.__name__}")
 
 
 def load_dashboard_payload():
@@ -139,6 +141,11 @@ def build_message(payload):
 
 def main():
     payload = load_dashboard_payload()
+    try:
+        trade_count = update_research_log(payload)
+        print(f"Research log updated with {trade_count} trade ideas.")
+    except Exception as exc:
+        print(f"Research log update failed: {exc}")
     message = build_message(payload)
     telegram_alert(message)
     print(message)
