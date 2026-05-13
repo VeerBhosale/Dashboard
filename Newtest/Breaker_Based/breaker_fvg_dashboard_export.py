@@ -558,8 +558,15 @@ def analyze_ticker(ticker, raw_data, multi_index):
         t3_low = float(swings.iloc[pos - 3]["Low"])
         t1_low = float(swings.iloc[pos - 1]["Low"])
         idx_high = float(btc.loc[idx, "High"])
+
+        # Hard gate for the breaker itself: no higher-high break, no signal.
+        if idx_high <= t2_high:
+            continue
+
         rise = t2_high - t3_low
         drop = t2_high - t1_low
+        if rise <= 0 or drop <= 0:
+            continue
         ratio = round(drop / rise, 3) if rise > 0 else 0.0
 
         t2_iloc = btc.index.get_loc(t2_ts)
