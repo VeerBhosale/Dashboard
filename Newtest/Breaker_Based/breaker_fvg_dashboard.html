@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Breaker+FVG Watchlist</title>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="./breaker_fvg_dashboard_data.js"></script>
+  <script src="./breaker_fvg_dashboard_data.js?v=phase1-structure"></script>
   <style>
     :root {
       --bg: #0b0e11;
@@ -262,6 +262,17 @@
       align-items: center;
       gap: 8px;
       min-width: 0;
+    }
+
+    .bias-pill {
+      border: 1px solid #2c3642;
+      border-radius: 999px;
+      color: #9fb0bf;
+      background: #10151c;
+      font-size: 11px;
+      line-height: 1;
+      padding: 7px 9px;
+      white-space: nowrap;
     }
 
     button {
@@ -709,6 +720,9 @@
         <div class="toolbar">
           <button id="rollingLevelsBtn" title="Toggle rolling ISL/ISH context">ISL/ISH</button>
           <button id="rangesBtn" title="Toggle liquidity ranges">Ranges</button>
+          <button id="structureBtn" title="Toggle Phase 1 market structure">Structure</button>
+          <button id="skeletonBtn" title="Toggle HH/LH/HL/LL market skeleton">Skeleton</button>
+          <span class="bias-pill" id="skeletonBias">Skeleton: n/a</span>
           <button id="fitBtn">Fit</button>
           <button id="lastSignalBtn">Last signal</button>
         </div>
@@ -739,6 +753,11 @@
 
   <script>
     const data = window.BREAKER_FVG_DATA || { tickers: [] };
+    const SKELETON_MIN_DELTA_ATR = 1.25;
+    const SKELETON_MIN_DELTA_PCT = 0.003;
+    const SKELETON_MIN_LEG_ATR = 1.25;
+    const SKELETON_MAX_MARKERS = 24;
+
     function sortClamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
     }
@@ -785,13 +804,16 @@
       signal: null,
       levelSeries: [],
       fvgZones: [],
+      structureZones: [],
       rollingVisible: false,
       rollingSeries: [],
       rollingOverlays: [],
       rangesVisible: false,
       rangeOverlays: [],
+      structureVisible: false,
+      structureSeries: [],
+      skeletonVisible: false,
       overlayFrame: null,
-      overlayLoopUntil: 0,
     };
 
     const app = document.getElementById('app');
@@ -800,6 +822,7 @@
     const search = document.getElementById('search');
     const chartTitle = document.getElementById('chartTitle');
     const chartSubtitle = document.getElementById('chartSubtitle');
+    const skeletonBias = document.getElementById('skeletonBias');
     const signalsEl = document.getElementById('signals');
     const metricsEl = document.getElementById('metrics');
     const probabilityMeterEl = document.getElementById('probabilityMeter');
@@ -910,17 +933,13 @@
 
     new ResizeObserver(() => {
       chart.applyOptions(chartSize());
-      updateOverlays();
+      scheduleOverlayUpdate(true);
     }).observe(chartEl);
-    chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlayUpdate);
-    chartEl.addEventListener('mousemove', scheduleOverlayUpdate);
-    chartEl.addEventListener('pointerdown', () => startOverlayLoop(1200), { passive: true });
-    chartEl.addEventListener('pointermove', () => startOverlayLoop(500), { passive: true });
-    chartEl.addEventListener('pointerup', () => startOverlayLoop(500), { passive: true });
-    chartEl.addEventListener('touchstart', () => startOverlayLoop(1200), { passive: true });
-    chartEl.addEventListener('touchmove', () => startOverlayLoop(500), { passive: true });
-    chartEl.addEventListener('touchend', () => startOverlayLoop(500), { passive: true });
-    chartEl.addEventListener('wheel', () => startOverlayLoop(500), { passive: true });
+    chart.timeScale().subscribeVisibleTimeRangeChange(() => scheduleOverlayUpdate());
+    chartEl.addEventListener('pointermove', () => scheduleOverlayUpdate(), { passive: true });
+    chartEl.addEventListener('pointerup', () => scheduleOverlayUpdate(true), { passive: true });
+    chartEl.addEventListener('pointercancel', () => scheduleOverlayUpdate(true), { passive: true });
+    chartEl.addEventListener('wheel', () => scheduleOverlayUpdate(), { passive: true });
 
     function fmt(value, digits = 2) {
       if (value === null || value === undefined || Number.isNaN(value)) return 'n/a';
@@ -954,6 +973,101 @@
       };
     }
 
+    function skeletonStateLabel() {
+      const skeleton = state.ticker?.market_skeleton || {};
+      if (!skeleton.state) return 'Skeleton: n/a';
+      const high = skeleton.last_high_type || 'n/a';
+      const low = skeleton.last_low_type || 'n/a';
+      return `Skeleton: ${skeleton.state} (${high}/${low})`;
+    }
+
+    function updateSkeletonBias() {
+      if (!skeletonBias) return;
+      skeletonBias.textContent = skeletonStateLabel();
+    }
+
+    function skeletonAtrBaseline() {
+      const candles = state.ticker?.candles || [];
+      if (candles.length < 2) return 0;
+      const start = Math.max(1, candles.length - 15);
+      const ranges = [];
+      for (let i = start; i < candles.length; i += 1) {
+        const candle = candles[i];
+        const prev = candles[i - 1];
+        const tr = Math.max(
+          Number(candle.high) - Number(candle.low),
+          Math.abs(Number(candle.high) - Number(prev.close)),
+          Math.abs(Number(candle.low) - Number(prev.close)),
+        );
+        if (Number.isFinite(tr) && tr > 0) ranges.push(tr);
+      }
+      if (!ranges.length) return 0;
+      return ranges.reduce((sum, value) => sum + value, 0) / ranges.length;
+    }
+
+    function skeletonOppositeLegOk(curr, oppositeLevels, atrBaseline) {
+      if (!atrBaseline) return true;
+      const previousOpposite = [...(oppositeLevels || [])]
+        .filter(level => level.time && level.time < curr.time && level.price !== null && level.price !== undefined)
+        .sort((a, b) => b.time - a.time)[0];
+      if (!previousOpposite) return true;
+      return Math.abs(Number(curr.price) - Number(previousOpposite.price)) >= atrBaseline * SKELETON_MIN_LEG_ATR;
+    }
+
+    function skeletonMarkers() {
+      if (!state.ticker || !state.skeletonVisible) return [];
+      const ledgers = state.ticker.level_ledgers || {};
+      const markers = [];
+      const atrBaseline = skeletonAtrBaseline();
+      const addTransitionMarkers = (levels, oppositeLevels, type) => {
+        const sorted = [...(levels || [])]
+          .filter(level => level.time && level.price !== null && level.price !== undefined)
+          .sort((a, b) => a.time - b.time);
+        for (let i = 1; i < sorted.length; i += 1) {
+          const prev = sorted[i - 1];
+          const curr = sorted[i];
+          const price = Number(curr.price);
+          const prevPrice = Number(prev.price);
+          const delta = Math.abs(price - prevPrice);
+          const threshold = Math.max(
+            atrBaseline * SKELETON_MIN_DELTA_ATR,
+            Math.abs(price) * SKELETON_MIN_DELTA_PCT,
+          );
+          if (delta < threshold) continue;
+          if (!skeletonOppositeLegOk(curr, oppositeLevels, atrBaseline)) continue;
+          const label = type === 'high'
+            ? (price > prevPrice ? 'HH' : price < prevPrice ? 'LH' : 'EH')
+            : (price > prevPrice ? 'HL' : price < prevPrice ? 'LL' : 'EL');
+          if (label === 'EH' || label === 'EL') continue;
+          const bullish = label === 'HH' || label === 'HL';
+          const bearish = label === 'LH' || label === 'LL';
+          markers.push({
+            time: curr.time,
+            position: type === 'high' ? 'aboveBar' : 'belowBar',
+            color: bullish ? '#00d09c' : bearish ? '#ff6b6b' : '#9aa7b2',
+            shape: 'circle',
+            text: label,
+            size: 1,
+          });
+        }
+      };
+      addTransitionMarkers(ledgers.swing_highs, ledgers.swing_lows, 'high');
+      addTransitionMarkers(ledgers.swing_lows, ledgers.swing_highs, 'low');
+      return markers
+        .sort((a, b) => a.time - b.time)
+        .slice(-SKELETON_MAX_MARKERS);
+    }
+
+    function renderChartMarkers() {
+      if (!state.ticker) {
+        candleSeries.setMarkers([]);
+        return;
+      }
+      const signalMarkers = state.ticker.signals.map(markerForSignal);
+      const markers = [...signalMarkers, ...skeletonMarkers()].sort((a, b) => a.time - b.time);
+      candleSeries.setMarkers(markers);
+    }
+
     function selectTicker(item) {
       state.ticker = item;
       state.signal = item.signals.at(-1) || null;
@@ -962,11 +1076,13 @@
       try {
         clearRollingLevels();
         clearRanges();
+        clearStructure();
         candleSeries.setData(item.candles);
-        candleSeries.setMarkers(item.signals.map(markerForSignal));
+        renderChartMarkers();
         if (state.rollingVisible) renderRollingLevels();
         if (state.rangesVisible) renderRanges();
         renderAllSignalLevels(item);
+        if (state.structureVisible) renderStructure();
         chartError.style.display = 'none';
       } catch (err) {
         showChartError(`Could not render chart for ${item.ticker}: ${err.message}`);
@@ -974,6 +1090,7 @@
       }
       renderSignals();
       renderSelectedSignal();
+      updateSkeletonBias();
       renderWatchlist();
       requestAnimationFrame(() => {
         candleSeries.priceScale().applyOptions({ autoScale: true });
@@ -1093,6 +1210,13 @@
     function clearRanges() {
       state.rangeOverlays.forEach(overlay => overlay.el.remove());
       state.rangeOverlays = [];
+    }
+
+    function clearStructure() {
+      state.structureSeries.forEach(series => chart.removeSeries(series));
+      state.structureSeries = [];
+      state.structureZones.forEach(zone => zone.remove());
+      state.structureZones = [];
     }
 
     function candleTimeAfter(startTime, bars = 14) {
@@ -1380,13 +1504,275 @@
       state.rangeOverlays.push({ el, range });
     }
 
+    function meanAtrForRange(candles, startIndex, lookback = 20) {
+      const from = Math.max(1, startIndex - lookback + 1);
+      const trs = [];
+      for (let i = from; i <= startIndex; i += 1) {
+        const prevClose = candles[i - 1]?.close ?? candles[i].close;
+        trs.push(Math.max(
+          candles[i].high - candles[i].low,
+          Math.abs(candles[i].high - prevClose),
+          Math.abs(candles[i].low - prevClose),
+        ));
+      }
+      if (!trs.length) return null;
+      return trs.reduce((sum, value) => sum + value, 0) / trs.length;
+    }
+
+    function derivedRangesForTicker(ticker) {
+      if (ticker.range_state && ticker.range_state.length) return ticker.range_state;
+      if (ticker.ranges && ticker.ranges.length) return ticker.ranges;
+      const levels = ticker.rolling_levels || {};
+      const candles = ticker.candles || [];
+      const candleIndex = new Map(candles.map((candle, index) => [candle.time, index]));
+      const events = [
+        ...(levels.isl || []).map(point => ({ ...point, type: 'isl' })),
+        ...(levels.ish || []).map(point => ({ ...point, type: 'ish' })),
+      ]
+        .filter(point => point.time && point.value !== null && point.value !== undefined)
+        .sort((a, b) => a.time - b.time);
+
+      const endTime = levels.end_time || candles.at(-1)?.time;
+      if (!events.length || !endTime) return [];
+
+      let latestIsl = null;
+      let latestIsh = null;
+      let active = null;
+      const ranges = [];
+
+      const closeActive = (end, breakSide = null) => {
+        if (!active || end <= active.start_time) {
+          active = null;
+          return;
+        }
+        const startIndex = candleIndex.get(active.start_time) ?? 0;
+        const endIndex = candleIndex.get(end) ?? Math.max(startIndex, candles.length - 1);
+        const width = active.upper - active.lower;
+        const atr = meanAtrForRange(candles, startIndex);
+        const widthAtr = atr && atr > 0 ? width / atr : null;
+        const duration = Math.max(0, endIndex - startIndex);
+        const compression = widthAtr === null ? 0 : Math.max(0, 1 - Math.min(widthAtr / 4, 1));
+        const ageScore = Math.min(duration / 20, 1);
+        const internalScore = Math.min((active.internal_isl_count + active.internal_ish_count) / 6, 1);
+
+        ranges.push({
+          ...active,
+          end_time: end,
+          duration,
+          width,
+          width_atr: widthAtr === null ? null : Number(widthAtr.toFixed(3)),
+          quality: Number((100 * (0.4 * ageScore + 0.4 * compression + 0.2 * internalScore)).toFixed(1)),
+          break_side: breakSide,
+        });
+        active = null;
+      };
+
+      events.forEach(event => {
+        if (active) {
+          if (event.type === 'ish' && event.value > active.upper) {
+            closeActive(event.time, 'up');
+          } else if (event.type === 'isl' && event.value < active.lower) {
+            closeActive(event.time, 'down');
+          } else if (event.type === 'ish') {
+            active.internal_ish_count += 1;
+          } else {
+            active.internal_isl_count += 1;
+          }
+        }
+
+        if (event.type === 'isl') {
+          latestIsl = event;
+        } else {
+          latestIsh = event;
+        }
+
+        if (!active && latestIsl && latestIsh && latestIsl.value < latestIsh.value) {
+          active = {
+            start_time: Math.max(latestIsl.time, latestIsh.time),
+            lower: latestIsl.value,
+            upper: latestIsh.value,
+            lower_time: latestIsl.time,
+            upper_time: latestIsh.time,
+            internal_isl_count: 0,
+            internal_ish_count: 0,
+          };
+        }
+      });
+
+      if (active) closeActive(endTime, null);
+      ticker.ranges = ranges;
+      return ranges;
+    }
+
     function renderRanges() {
       clearRanges();
       if (!state.ticker || !state.rangesVisible) return;
-      (state.ticker.ranges || []).forEach(range => {
+      derivedRangesForTicker(state.ticker).forEach(range => {
         if (!range.start_time || !range.end_time || range.lower === null || range.upper === null) return;
         addRangeCanvas(range);
       });
+      requestAnimationFrame(updateOverlays);
+    }
+
+    function renderStructure() {
+      clearStructure();
+      if (!state.ticker || !state.structureVisible) return;
+
+      const ledgers = state.ticker.level_ledgers || {};
+      const mergedFvgZones = state.ticker.merged_fvg_zones || {};
+      const endTime = state.ticker.candles?.at(-1)?.time || null;
+      if (!endTime) return;
+
+      const configs = [
+        ['visual_sell_levels', '#00d09c', 1],
+        ['visual_buy_levels', '#ff5c5c', 1],
+      ];
+      const maxLinesPerSide = 12;
+      const visibleFvgZones = zones => [...zones]
+        .sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0));
+      const clusters = state.ticker.liquidity_clusters || {};
+      const isVisibleLiquidityBand = cluster => {
+        const levelCount = Number(cluster.level_count || 0);
+        const fvgBackedCount = Number(cluster.fvg_backed_count || 0);
+        if (levelCount > 1) return true;
+        return fvgBackedCount > 0;
+      };
+      const compareLiquidityBands = (a, b) => {
+        const multiLevelA = Number(a.level_count || 0) > 1 ? 1 : 0;
+        const multiLevelB = Number(b.level_count || 0) > 1 ? 1 : 0;
+        if (multiLevelA !== multiLevelB) return multiLevelB - multiLevelA;
+        if (Number(a.level_count || 0) !== Number(b.level_count || 0)) return Number(b.level_count || 0) - Number(a.level_count || 0);
+        if (Boolean(a.active) !== Boolean(b.active)) return Number(Boolean(b.active)) - Number(Boolean(a.active));
+        if (Number(a.fvg_backed_count || 0) !== Number(b.fvg_backed_count || 0)) return Number(b.fvg_backed_count || 0) - Number(a.fvg_backed_count || 0);
+        return Number(b.density || 0) - Number(a.density || 0);
+      };
+      const visibleSellClusters = (clusters.sell || [])
+        .filter(isVisibleLiquidityBand)
+        .sort(compareLiquidityBands);
+      const visibleBuyClusters = (clusters.buy || [])
+        .filter(isVisibleLiquidityBand)
+        .sort(compareLiquidityBands);
+      const overlapsCluster = (level, clusterList) => {
+        const price = Number(level.price);
+        if (!Number.isFinite(price)) return false;
+        const levelTime = Number(level.time || level.source_time || 0);
+        return clusterList.some(cluster => {
+          const clusterEnd = Number(cluster.end_time || endTime);
+          if (levelTime && clusterEnd && levelTime > clusterEnd) return false;
+          const lower = Number(cluster.visual_lower ?? cluster.lower);
+          const upper = Number(cluster.visual_upper ?? cluster.upper);
+          return price >= lower && price <= upper;
+        });
+      };
+
+      const dedupeLevels = (levels) => {
+        const sorted = [...levels]
+          .filter(level => level.price !== null && level.price !== undefined)
+          .sort((a, b) => {
+            if (a.price !== b.price) return a.price - b.price;
+            return (a.confirmation_time || a.time || a.source_time || 0) - (b.confirmation_time || b.time || b.source_time || 0);
+          });
+        const output = [];
+        sorted.forEach(level => {
+          const price = Number(level.price);
+          const tolerance = Math.max(Math.abs(price) * 0.0008, 0.05);
+          const existing = output.find(item => Math.abs(Number(item.price) - price) <= tolerance);
+          if (!existing) {
+            output.push(level);
+            return;
+          }
+          const existingRank = existing.type === 'ISL' || existing.type === 'ISH' ? 2 : 1;
+          const levelRank = level.type === 'ISL' || level.type === 'ISH' ? 2 : 1;
+          if (
+            levelRank > existingRank
+            || (levelRank === existingRank && (level.age_bars || 0) > (existing.age_bars || 0))
+          ) {
+            Object.assign(existing, level);
+          }
+        });
+        return output;
+      };
+
+      configs.forEach(([key, color, lineStyle]) => {
+        const clusterList = key === 'visual_sell_levels' ? visibleSellClusters : visibleBuyClusters;
+        dedupeLevels(ledgers[key] || [])
+          .filter(level => !overlapsCluster(level, clusterList))
+          .sort((a, b) => {
+            const rankA = a.type === 'ISL' || a.type === 'ISH' ? 2 : 1;
+            const rankB = b.type === 'ISL' || b.type === 'ISH' ? 2 : 1;
+            if (rankA !== rankB) return rankB - rankA;
+            return (b.age_bars || 0) - (a.age_bars || 0);
+          })
+          .slice(0, maxLinesPerSide)
+          .forEach(level => {
+          const time = level.source_time || level.time;
+          const price = level.price;
+          if (!time || price === null || price === undefined || endTime <= time) return;
+          if (!priceFitsCurrentTicker(price)) return;
+          const isIntermediate = level.type === 'ISL' || level.type === 'ISH';
+          const label = isIntermediate
+            ? level.type
+            : `${level.type}-FVG`;
+          const series = chart.addLineSeries({
+            color,
+            lineWidth: isIntermediate ? 2 : 1,
+            lineStyle,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          series.setData([
+            { time, value: price },
+            { time: endTime, value: price },
+          ]);
+          series.setMarkers([{
+            time: endTime,
+            position: 'inBar',
+            color,
+            shape: 'circle',
+            text: label,
+            size: 1,
+          }]);
+          state.structureSeries.push(series);
+        });
+      });
+
+      visibleFvgZones(mergedFvgZones.bullish || []).forEach(zone => {
+        addFvgZone(
+          zone.start_time,
+          endTime,
+          zone.lower,
+          zone.upper,
+          { fill: 'rgba(38, 166, 154, 0.10)', stroke: 'rgba(38, 166, 154, 0.48)' },
+          'structure',
+        );
+      });
+      visibleFvgZones(mergedFvgZones.bearish || []).forEach(zone => {
+        addFvgZone(
+          zone.start_time,
+          endTime,
+          zone.lower,
+          zone.upper,
+          { fill: 'rgba(239, 83, 80, 0.09)', stroke: 'rgba(239, 83, 80, 0.44)' },
+          'structure',
+        );
+      });
+
+      addLiquidityBandsCanvas(visibleSellClusters, endTime, 'SSL', {
+        activeFill: 'rgba(38, 166, 154, 0.035)',
+        activeStroke: 'rgba(38, 166, 154, 0.72)',
+        historicalFill: 'rgba(38, 166, 154, 0.018)',
+        historicalStroke: 'rgba(38, 166, 154, 0.34)',
+        label: '#00d09c',
+      });
+      addLiquidityBandsCanvas(visibleBuyClusters, endTime, 'BSL', {
+        activeFill: 'rgba(239, 83, 80, 0.03)',
+        activeStroke: 'rgba(239, 83, 80, 0.68)',
+        historicalFill: 'rgba(239, 83, 80, 0.016)',
+        historicalStroke: 'rgba(239, 83, 80, 0.32)',
+        label: '#ff5c5c',
+      });
+
       requestAnimationFrame(updateOverlays);
     }
 
@@ -1448,14 +1834,20 @@
     function clearLevelLabels() {
     }
 
-    function addFvgZone(startTime, endTime, lower, upper) {
+    function addFvgZone(startTime, endTime, lower, upper, colors = null, owner = 'signal', options = {}) {
       if (!startTime || !endTime || lower === null || upper === null || lower === undefined || upper === undefined) return;
       if (!timeFitsCurrentTicker(startTime) || !timeFitsCurrentTicker(endTime)) return;
       if (!priceFitsCurrentTicker(lower) || !priceFitsCurrentTicker(upper)) return;
+      const fill = colors?.fill || 'rgba(38, 166, 154, 0.12)';
+      const stroke = colors?.stroke || 'rgba(38, 166, 154, 0.58)';
       const zone = document.createElement('canvas');
       zone.className = 'fvg-zone-canvas';
       chartEl.appendChild(zone);
-      state.fvgZones.push(zone);
+      if (owner === 'structure') {
+        state.structureZones.push(zone);
+      } else {
+        state.fvgZones.push(zone);
+      }
 
       const update = () => {
         const width = chartEl.clientWidth;
@@ -1495,11 +1887,23 @@
           return;
         }
 
-        ctx.fillStyle = 'rgba(38, 166, 154, 0.12)';
-        ctx.strokeStyle = 'rgba(38, 166, 154, 0.58)';
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = stroke;
         ctx.lineWidth = 1;
+        if (options.dash) ctx.setLineDash(options.dash);
         ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
         ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+        ctx.setLineDash([]);
+
+        if (options.label) {
+          ctx.font = '11px Inter, Segoe UI, Arial, sans-serif';
+          ctx.fillStyle = options.labelColor || stroke;
+          ctx.textBaseline = 'top';
+          const textWidth = ctx.measureText(options.label).width;
+          const textX = Math.max(left + 4, Math.min(right - textWidth - 4, right - textWidth - 4));
+          const textY = Math.max(2, top + 3);
+          ctx.fillText(options.label, textX, textY);
+        }
       };
 
       zone._update = update;
@@ -1508,6 +1912,67 @@
 
     function updateFvgZones() {
       state.fvgZones.forEach(zone => zone._update && zone._update());
+      state.structureZones.forEach(zone => zone._update && zone._update());
+    }
+
+    function addLiquidityBandsCanvas(clusters, endTime, prefix, colors) {
+      if (!clusters.length) return;
+      const canvas = document.createElement('canvas');
+      canvas.className = 'fvg-zone-canvas';
+      chartEl.appendChild(canvas);
+      state.structureZones.push(canvas);
+
+      canvas._update = () => {
+        const width = chartEl.clientWidth;
+        const height = chartEl.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+          canvas.width = Math.floor(width * dpr);
+          canvas.height = Math.floor(height * dpr);
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+        }
+
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.font = '11px Inter, Segoe UI, Arial, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+
+        clusters.forEach(cluster => {
+          const startTime = cluster.oldest_time;
+          const clusterEndTime = cluster.end_time || endTime;
+          const lower = cluster.visual_lower ?? cluster.lower;
+          const upper = cluster.visual_upper ?? cluster.upper;
+          const x1 = chart.timeScale().timeToCoordinate(startTime);
+          const x2 = chart.timeScale().timeToCoordinate(clusterEndTime);
+          const yUpper = candleSeries.priceToCoordinate(upper);
+          const yLower = candleSeries.priceToCoordinate(lower);
+          if ([x1, x2, yUpper, yLower].some(value => value === null || value === undefined)) return;
+
+          const left = Math.max(0, Math.min(width, Math.min(x1, x2)));
+          const right = Math.max(0, Math.min(width, Math.max(x1, x2)));
+          const top = Math.max(0, Math.min(height, Math.min(yUpper, yLower)));
+          const bottom = Math.max(0, Math.min(height, Math.max(yUpper, yLower)));
+          if (right - left < 2 || bottom - top < 2) return;
+
+          ctx.fillStyle = cluster.active ? colors.activeFill : colors.historicalFill;
+          ctx.strokeStyle = cluster.active ? colors.activeStroke : colors.historicalStroke;
+          ctx.fillRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+          ctx.strokeRect(Math.round(left) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(right - left)), Math.max(1, Math.round(bottom - top)));
+
+          const label = `${prefix} x${cluster.level_count}`;
+          const textWidth = ctx.measureText(label).width;
+          const textX = Math.max(left + 4, right - textWidth - 4);
+          ctx.fillStyle = colors.label;
+          ctx.fillText(label, textX, Math.max(2, top + 3));
+        });
+        ctx.setLineDash([]);
+      };
+
+      canvas._update();
     }
 
     function drawRangeCanvas(overlay) {
@@ -1706,19 +2171,6 @@
       });
     }
 
-    function startOverlayLoop(durationMs = 500) {
-      state.overlayLoopUntil = Math.max(state.overlayLoopUntil, performance.now() + durationMs);
-      if (state.overlayFrame) return;
-      const tick = () => {
-        state.overlayFrame = null;
-        updateOverlays();
-        if (performance.now() < state.overlayLoopUntil) {
-          state.overlayFrame = requestAnimationFrame(tick);
-        }
-      };
-      state.overlayFrame = requestAnimationFrame(tick);
-    }
-
     function addLevelSegment(sourceName, displayLabel, startTime, endTime, price, color) {
       if (!startTime || price === null || price === undefined || Number.isNaN(price)) return;
       if (!endTime) return;
@@ -1910,6 +2362,14 @@
       addMetric('Range Age', fmt(m.range_age, 0));
       addMetric('Range Width ATR', fmt(m.range_width_atr, 2));
       addMetric('Range Internal L/H', `${fmt(m.range_internal_isl, 0)} / ${fmt(m.range_internal_ish, 0)}`);
+      const structure = state.ticker?.structure_state || {};
+      const skeleton = state.ticker?.market_skeleton || {};
+      const premium = state.ticker?.premium_discount || {};
+      addMetric('Structure', skeleton.state || 'n/a');
+      addMetric('Active Buy/Sell Levels', `${fmt(structure.active_buy_levels, 0)} / ${fmt(structure.active_sell_levels, 0)}`);
+      addMetric('Active ISH/ISL', `${fmt(structure.active_ish, 0)} / ${fmt(structure.active_isl, 0)}`);
+      addMetric('Buy/Sell Clusters', `${fmt(structure.buy_clusters, 0)} / ${fmt(structure.sell_clusters, 0)}`);
+      addMetric('Premium/Discount', premium.zone || 'n/a');
     }
 
     function focusSignal(signal) {
@@ -1946,6 +2406,17 @@
       document.getElementById('rangesBtn').classList.toggle('active', state.rangesVisible);
       renderRanges();
       requestAnimationFrame(updateOverlays);
+    };
+    document.getElementById('structureBtn').onclick = () => {
+      state.structureVisible = !state.structureVisible;
+      document.getElementById('structureBtn').classList.toggle('active', state.structureVisible);
+      renderStructure();
+      requestAnimationFrame(updateOverlays);
+    };
+    document.getElementById('skeletonBtn').onclick = () => {
+      state.skeletonVisible = !state.skeletonVisible;
+      document.getElementById('skeletonBtn').classList.toggle('active', state.skeletonVisible);
+      renderChartMarkers();
     };
     document.getElementById('leftPanelBtn').onclick = () => {
       const opening = app.classList.contains('left-collapsed');
